@@ -7,6 +7,11 @@ use std::path::{Path, PathBuf};
 
 use crate::imposition::*;
 
+#[inline]
+fn obj_to_f32(obj: &Object) -> Option<f32> {
+    obj.as_float().ok()
+}
+
 /// Concatenates multiple PDF documents into a single unified file.
 pub fn merge_documents(inputs: &[PathBuf], output: &Path, preserve_bookmarks: bool) -> Result<()> {
     if inputs.is_empty() {
@@ -255,46 +260,129 @@ pub fn crop_document_margins(
     output: &Path,
     preserve_headers: bool,
     padding: f32,
-    _threshold: f32,
+    threshold: f32,
 ) -> Result<()> {
     let mut doc = Document::load(input)?;
     let pages = doc.get_pages();
 
     for (_, page_id) in pages {
-        let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
-
-        // Retrieve existing MediaBox
-        let (min_x, min_y, max_x, max_y) =
+        let (min_x, min_y, max_x, max_y) = {
+            let page_dict = doc.get_object(page_id)?.as_dict()?;
             if let Ok(arr) = page_dict.get(b"MediaBox").and_then(|o| o.as_array()) {
                 if arr.len() == 4 {
-                    let x0 = arr[0].as_f32().unwrap_or(0.0);
-                    let y0 = arr[1].as_f32().unwrap_or(0.0);
-                    let x1 = arr[2].as_f32().unwrap_or(595.0);
-                    let y1 = arr[3].as_f32().unwrap_or(842.0);
+                    let x0 = obj_to_f32(&arr[0]).unwrap_or(0.0);
+                    let y0 = obj_to_f32(&arr[1]).unwrap_or(0.0);
+                    let x1 = obj_to_f32(&arr[2]).unwrap_or(595.0);
+                    let y1 = obj_to_f32(&arr[3]).unwrap_or(842.0);
                     (x0, y0, x1, y1)
                 } else {
                     (0.0, 0.0, 595.0, 842.0)
                 }
             } else {
                 (0.0, 0.0, 595.0, 842.0)
-            };
+            }
+        };
 
         let width = max_x - min_x;
         let height = max_y - min_y;
 
-        // Compute intelligent crop bounds
-        // By default, crop 8% horizontal margins and 6% vertical margins, respecting headers/footers
-        let h_margin = width * 0.08;
-        let v_margin = if preserve_headers {
-            height * 0.04
-        } else {
-            height * 0.09
-        };
+        // Inspect content stream operations to locate actual content bounds
+        let mut content_bounds: Option<(f32, f32, f32, f32)> = None;
+        if let Ok(content) = doc.get_and_decode_page_content(page_id) {
+            let mut curr_x = 0.0f32;
+            let mut curr_y = 0.0f32;
+            let mut min_cx = f32::MAX;
+            let mut min_cy = f32::MAX;
+            let mut max_cx = f32::MIN;
+            let mut max_cy = f32::MIN;
+            let mut found = false;
 
-        let crop_x0 = (min_x + h_margin - padding).max(min_x);
-        let crop_y0 = (min_y + v_margin - padding).max(min_y);
-        let crop_x1 = (max_x - h_margin + padding).min(max_x);
-        let crop_y1 = (max_y - v_margin + padding).min(max_y);
+            for op in &content.operations {
+                match op.operator.as_str() {
+                    "Tm" if op.operands.len() >= 6 => {
+                        if let (Some(x), Some(y)) =
+                            (obj_to_f32(&op.operands[4]), obj_to_f32(&op.operands[5]))
+                        {
+                            curr_x = x;
+                            curr_y = y;
+                        }
+                    }
+                    "Td" | "TD" if op.operands.len() >= 2 => {
+                        if let (Some(dx), Some(dy)) =
+                            (obj_to_f32(&op.operands[0]), obj_to_f32(&op.operands[1]))
+                        {
+                            curr_x += dx;
+                            curr_y += dy;
+                        }
+                    }
+                    "Tj" | "TJ" | "'" | "\"" => {
+                        min_cx = min_cx.min(curr_x);
+                        min_cy = min_cy.min(curr_y);
+                        max_cx = max_cx.max(curr_x + 50.0);
+                        max_cy = max_cy.max(curr_y + 12.0);
+                        found = true;
+                    }
+                    "re" if op.operands.len() >= 4 => {
+                        if let (Some(rx), Some(ry), Some(rw), Some(rh)) = (
+                            obj_to_f32(&op.operands[0]),
+                            obj_to_f32(&op.operands[1]),
+                            obj_to_f32(&op.operands[2]),
+                            obj_to_f32(&op.operands[3]),
+                        ) {
+                            min_cx = min_cx.min(rx);
+                            min_cy = min_cy.min(ry);
+                            max_cx = max_cx.max(rx + rw);
+                            max_cy = max_cy.max(ry + rh);
+                            found = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if found && min_cx < max_cx && min_cy < max_cy {
+                content_bounds = Some((min_cx, min_cy, max_cx, max_cy));
+            }
+        }
+
+        let (mut crop_x0, mut crop_y0, mut crop_x1, mut crop_y1) =
+            if let Some((cx0, cy0, cx1, cy1)) = content_bounds {
+                (
+                    (cx0 - padding).max(min_x),
+                    (cy0 - padding).max(min_y),
+                    (cx1 + padding).min(max_x),
+                    (cy1 + padding).min(max_y),
+                )
+            } else {
+                // Adaptive margin factor based on threshold
+                let margin_pct = ((1.0 - threshold.clamp(0.0, 1.0)) * 0.2).clamp(0.04, 0.12);
+                let h_margin = width * margin_pct;
+                let v_margin = if preserve_headers {
+                    height * (margin_pct * 0.5)
+                } else {
+                    height * margin_pct
+                };
+                (
+                    (min_x + h_margin - padding).max(min_x),
+                    (min_y + v_margin - padding).max(min_y),
+                    (max_x - h_margin + padding).min(max_x),
+                    (max_y - v_margin + padding).min(max_y),
+                )
+            };
+
+        if preserve_headers {
+            crop_y0 = crop_y0.min(min_y + height * 0.05);
+            crop_y1 = crop_y1.max(max_y - height * 0.05);
+        }
+
+        if crop_x1 <= crop_x0 {
+            crop_x0 = min_x;
+            crop_x1 = max_x;
+        }
+        if crop_y1 <= crop_y0 {
+            crop_y0 = min_y;
+            crop_y1 = max_y;
+        }
 
         let crop_box = vec![
             Object::Real(crop_x0),
@@ -303,6 +391,7 @@ pub fn crop_document_margins(
             Object::Real(crop_y1),
         ];
 
+        let page_dict = doc.get_object_mut(page_id)?.as_dict_mut()?;
         page_dict.set("CropBox", Object::Array(crop_box));
     }
 
@@ -327,18 +416,109 @@ pub fn impose_document(
     marks: bool,
     gutter: f32,
 ) -> Result<()> {
-    let doc = Document::load(input)?;
-    let pages = doc.get_pages();
+    let mut src_doc = Document::load(input)?;
+    let pages = src_doc.get_pages();
     let total_pages = pages.len();
+    if total_pages == 0 {
+        return Err(anyhow!("Document {:?} has 0 pages", input));
+    }
+
+    let mut sorted_src_pages: Vec<(u32, ObjectId)> = pages.into_iter().collect();
+    sorted_src_pages.sort_by_key(|(p, _)| *p);
+
+    let mut imposed = Document::with_version("1.7");
+    let mut max_id: u32 = 1;
+    let pages_tree_id = (max_id, 0);
+    max_id += 1;
+
+    // Remap source objects and copy into imposed document
+    let id_offset = 1000u32;
+    for (&old_id, obj) in src_doc.objects.iter_mut() {
+        remap_object_references(obj, id_offset);
+        let new_id = (old_id.0 + id_offset, old_id.1);
+        imposed.objects.insert(new_id, obj.clone());
+        if new_id.0 >= max_id {
+            max_id = new_id.0 + 1;
+        }
+    }
+
+    // Convert each source page into a Form XObject
+    // Map: src_page_number (1-indexed) -> (form_xobject_id, width, height)
+    let mut form_xobjects: std::collections::BTreeMap<usize, (ObjectId, f32, f32)> =
+        std::collections::BTreeMap::new();
+
+    for (p_idx, old_page_id) in &sorted_src_pages {
+        let remapped_page_id = (old_page_id.0 + id_offset, old_page_id.1);
+        if let Some(Object::Dictionary(page_dict)) = imposed.objects.get(&remapped_page_id).cloned()
+        {
+            let (pw, ph) = if let Ok(arr) = page_dict.get(b"MediaBox").and_then(|o| o.as_array()) {
+                if arr.len() == 4 {
+                    let w = (obj_to_f32(&arr[2]).unwrap_or(595.0)
+                        - obj_to_f32(&arr[0]).unwrap_or(0.0))
+                    .abs();
+                    let h = (obj_to_f32(&arr[3]).unwrap_or(842.0)
+                        - obj_to_f32(&arr[1]).unwrap_or(0.0))
+                    .abs();
+                    (w, h)
+                } else {
+                    (595.0, 842.0)
+                }
+            } else {
+                (595.0, 842.0)
+            };
+
+            let content_bytes = if let Ok(content_obj) = page_dict.get(b"Contents") {
+                match content_obj {
+                    Object::Reference(c_ref) => {
+                        if let Some(Object::Stream(s)) = imposed.objects.get(c_ref) {
+                            s.content.clone()
+                        } else {
+                            Vec::new()
+                        }
+                    }
+                    Object::Stream(s) => s.content.clone(),
+                    Object::Array(arr) => {
+                        let mut combined = Vec::new();
+                        for item in arr {
+                            if let Object::Reference(c_ref) = item {
+                                if let Some(Object::Stream(s)) = imposed.objects.get(c_ref) {
+                                    combined.extend_from_slice(&s.content);
+                                    combined.push(b'\n');
+                                }
+                            }
+                        }
+                        combined
+                    }
+                    _ => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+
+            let form_id = (max_id, 0);
+            max_id += 1;
+
+            let mut form_dict = Dictionary::new();
+            form_dict.set("Type", Object::Name(b"XObject".to_vec()));
+            form_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+            form_dict.set(
+                "BBox",
+                Object::Array(vec![0.into(), 0.into(), pw.into(), ph.into()]),
+            );
+            if let Ok(res) = page_dict.get(b"Resources") {
+                form_dict.set("Resources", res.clone());
+            }
+
+            let form_stream = lopdf::Stream::new(form_dict, content_bytes);
+            imposed.objects.insert(form_id, Object::Stream(form_stream));
+
+            form_xobjects.insert(*p_idx as usize, (form_id, pw, ph));
+        }
+    }
 
     if booklet {
         // Saddle-stitch booklet imposition
         let signatures = calculate_booklet_signatures(total_pages, creep_pt);
-        let mut imposed = Document::with_version("1.7");
-        let mut max_id: u32 = 1;
-
-        let pages_tree_id = (max_id, 0);
-        max_id += 1;
         let mut imposed_page_ids = Vec::new();
 
         // Standard parent sheet size (A3 landscape: 842 x 595 pt)
@@ -346,7 +526,6 @@ pub fn impose_document(
         let sheet_h = 595.0f32;
 
         for sig in signatures {
-            // Front face and Back face
             for is_back in [false, true] {
                 let (left_p, right_p) = if is_back {
                     (sig.back_left, sig.back_right)
@@ -407,25 +586,43 @@ pub fn impose_document(
                     ));
                 }
 
-                // Page placement with creep compensation
+                // Page placement with creep compensation and Form XObject invocation
                 let half_w = sheet_w / 2.0;
                 let creep_shift = sig.creep_pt;
+                let mut xobjects_dict = Dictionary::new();
 
                 // Left page
                 if left_p > 0 {
-                    content_stream.push_str(&format!(
-                        "q 1 0 0 1 {} 0 cm % Placed Page {}\nQ\n",
-                        gutter - creep_shift,
-                        left_p
-                    ));
+                    if let Some(&(form_id, pw, ph)) = form_xobjects.get(&left_p) {
+                        xobjects_dict.set("SrcLeft", Object::Reference(form_id));
+                        let max_w = (half_w - gutter * 2.0).max(10.0);
+                        let max_h = (sheet_h - gutter * 2.0).max(10.0);
+                        let scale = (max_w / pw).min(max_h / ph).min(1.0);
+                        let tx = gutter - creep_shift + (half_w - gutter * 2.0 - pw * scale) / 2.0;
+                        let ty = gutter + (sheet_h - gutter * 2.0 - ph * scale) / 2.0;
+                        content_stream.push_str(&format!(
+                            "q {} 0 0 {} {} {} cm /SrcLeft Do Q\n",
+                            scale, scale, tx, ty
+                        ));
+                    }
                 }
                 // Right page
                 if right_p > 0 {
-                    content_stream.push_str(&format!(
-                        "q 1 0 0 1 {} 0 cm % Placed Page {}\nQ\n",
-                        half_w + gutter + creep_shift,
-                        right_p
-                    ));
+                    if let Some(&(form_id, pw, ph)) = form_xobjects.get(&right_p) {
+                        xobjects_dict.set("SrcRight", Object::Reference(form_id));
+                        let max_w = (half_w - gutter * 2.0).max(10.0);
+                        let max_h = (sheet_h - gutter * 2.0).max(10.0);
+                        let scale = (max_w / pw).min(max_h / ph).min(1.0);
+                        let tx = half_w
+                            + gutter
+                            + creep_shift
+                            + (half_w - gutter * 2.0 - pw * scale) / 2.0;
+                        let ty = gutter + (sheet_h - gutter * 2.0 - ph * scale) / 2.0;
+                        content_stream.push_str(&format!(
+                            "q {} 0 0 {} {} {} cm /SrcRight Do Q\n",
+                            scale, scale, tx, ty
+                        ));
+                    }
                 }
                 content_stream.push_str("Q\n");
 
@@ -445,6 +642,12 @@ pub fn impose_document(
                     Object::Array(vec![0.into(), 0.into(), sheet_w.into(), sheet_h.into()]),
                 );
                 page_dict.set("Contents", Object::Reference(stream_id));
+
+                if !xobjects_dict.is_empty() {
+                    let mut res_dict = Dictionary::new();
+                    res_dict.set("XObject", Object::Dictionary(xobjects_dict));
+                    page_dict.set("Resources", Object::Dictionary(res_dict));
+                }
 
                 imposed
                     .objects
@@ -494,10 +697,6 @@ pub fn impose_document(
 
     // N-up imposition
     let grid = NupGrid::for_nup(nup);
-    let mut imposed = Document::with_version("1.7");
-    let mut max_id: u32 = 1;
-    let pages_tree_id = (max_id, 0);
-    max_id += 1;
     let mut imposed_page_ids = Vec::new();
 
     let sheet_w = 842.0f32;
@@ -513,6 +712,7 @@ pub fn impose_document(
         max_id += 1;
 
         let mut content_stream = format!("q % N-up Sheet {}\n", s + 1);
+        let mut xobjects_dict = Dictionary::new();
 
         for row in 0..grid.rows {
             for col in 0..grid.cols {
@@ -522,10 +722,20 @@ pub fn impose_document(
                     let cell_x = gutter + col as f32 * (cell_w + gutter);
                     let cell_y = sheet_h - (gutter + (row as f32 + 1.0) * cell_h);
 
-                    content_stream.push_str(&format!(
-                        "q 1 0 0 1 {} {} cm % Cell [{}, {}] Page {}\nQ\n",
-                        cell_x, cell_y, col, row, src_page_num
-                    ));
+                    if let Some(&(form_id, pw, ph)) = form_xobjects.get(&src_page_num) {
+                        let cell_name = format!("Cell_{}_{}", row, col);
+                        xobjects_dict
+                            .set(cell_name.as_bytes().to_vec(), Object::Reference(form_id));
+
+                        let scale = (cell_w / pw).min(cell_h / ph).min(1.0);
+                        let tx = cell_x + (cell_w - pw * scale) / 2.0;
+                        let ty = cell_y + (cell_h - ph * scale) / 2.0;
+
+                        content_stream.push_str(&format!(
+                            "q {} 0 0 {} {} {} cm /{} Do Q\n",
+                            scale, scale, tx, ty, cell_name
+                        ));
+                    }
 
                     if marks {
                         content_stream.push_str(&format!(
@@ -554,6 +764,12 @@ pub fn impose_document(
             Object::Array(vec![0.into(), 0.into(), sheet_w.into(), sheet_h.into()]),
         );
         page_dict.set("Contents", Object::Reference(stream_id));
+
+        if !xobjects_dict.is_empty() {
+            let mut res_dict = Dictionary::new();
+            res_dict.set("XObject", Object::Dictionary(xobjects_dict));
+            page_dict.set("Resources", Object::Dictionary(res_dict));
+        }
 
         imposed
             .objects

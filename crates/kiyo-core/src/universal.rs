@@ -419,6 +419,13 @@ pub trait SequentialArtDocument: Send + Sync {
 
     /// Extracts panel bounding boxes for guided panel-by-panel navigation.
     fn detect_panels(&self, index: usize) -> Result<Vec<ComicPanel>>;
+
+    /// Retrieves raw image bytes for a page frame.
+    fn get_image_bytes(&self, _index: usize) -> Result<Vec<u8>> {
+        Err(anyhow::anyhow!(
+            "get_image_bytes not implemented for this format"
+        ))
+    }
 }
 
 /// Full Adobe Acrobat X / Pro content manipulation interface.

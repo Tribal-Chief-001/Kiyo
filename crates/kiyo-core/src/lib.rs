@@ -1175,6 +1175,15 @@ mod tests {
         assert_eq!(doc.image_entries[0].name, "page01.jpg");
         assert_eq!(doc.image_entries[0].unpacked_size, 10);
 
+        let img = doc.read_page_image(0).expect("Read CBR page 0 image");
+        assert_eq!(img, b"0123456789");
+        let seq_img = doc
+            .as_sequential_art()
+            .unwrap()
+            .get_image_bytes(0)
+            .expect("Get sequential image bytes");
+        assert_eq!(seq_img, b"0123456789");
+
         let _ = std::fs::remove_file(cbr_path);
     }
 
@@ -1308,6 +1317,17 @@ mod tests {
             .expect("Booklet imposition with marks");
         let imposed_doc = Document::open(&imposed_path).expect("Open imposed document");
         assert!(imposed_doc.page_count() >= 1);
+        let imposed_lopdf = imposed_doc.load_lopdf().unwrap();
+        let imposed_pages = imposed_lopdf.get_pages();
+        let sheet1_id = imposed_pages.get(&1).unwrap();
+        let sheet1 = imposed_lopdf
+            .get_object(*sheet1_id)
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        assert!(sheet1.has(b"Resources"));
+        let res = sheet1.get(b"Resources").unwrap().as_dict().unwrap();
+        assert!(res.has(b"XObject"));
 
         // Cleanup
         let _ = std::fs::remove_file(doc1_path);
@@ -1334,10 +1354,70 @@ mod tests {
         // Salvage pipeline recovers the document via Stage 3 brute-force scan!
         let (salvaged, stage) = salvage_corrupted_pdf(&pdf_bytes).expect("Salvage damaged PDF");
         assert!(salvaged.trailer.has(b"Root"));
+        assert_eq!(salvaged.get_pages().len(), 1);
         assert!(
             stage == SalvageStage::BruteForceScan || stage == SalvageStage::ObjStmDecompression
         );
 
         let _ = std::fs::remove_file(test_path);
+    }
+
+    #[test]
+    fn test_mixed_orientation_imposition() {
+        let temp_dir = std::env::temp_dir();
+        let input_path = temp_dir.join(format!("kiyo_mixed_input_{}.pdf", std::process::id()));
+        let imposed_path = temp_dir.join(format!("kiyo_mixed_imposed_{}.pdf", std::process::id()));
+
+        // Create PDF with Page 1 = portrait (595x842) and Page 2 = landscape (842x595)
+        let mut pdf_doc = lopdf::Document::with_version("1.4");
+        let pages_id = pdf_doc.new_object_id();
+        let content_id = pdf_doc.add_object(lopdf::Stream::new(
+            dictionary! {},
+            b"BT /F1 12 Tf 72 712 Td (Page Text) Tj ET".to_vec(),
+        ));
+        let page1_id = pdf_doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        });
+        let page2_id = pdf_doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content_id,
+            "MediaBox" => vec![0.into(), 0.into(), 842.into(), 595.into()],
+        });
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page1_id.into(), page2_id.into()],
+            "Count" => 2,
+        };
+        pdf_doc
+            .objects
+            .insert(pages_id, lopdf::Object::Dictionary(pages));
+        let catalog_id = pdf_doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        pdf_doc.trailer.set("Root", catalog_id);
+        let mut file = File::create(&input_path).expect("Create mixed orientation file");
+        pdf_doc.save_to(&mut file).expect("Save mixed file");
+
+        // Impose booklet
+        impose_document(&input_path, &imposed_path, 2, true, 0.2835, true, 14.17)
+            .expect("Booklet imposition of mixed orientation doc");
+
+        let imposed_doc = Document::open(&imposed_path).expect("Open mixed imposed doc");
+        assert!(imposed_doc.page_count() >= 1);
+        let lopdf_doc = imposed_doc.load_lopdf().expect("Load lopdf");
+        let sheet1 = lopdf_doc
+            .get_object(*lopdf_doc.get_pages().get(&1).unwrap())
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        assert!(sheet1.has(b"Resources"));
+
+        let _ = std::fs::remove_file(input_path);
+        let _ = std::fs::remove_file(imposed_path);
     }
 }

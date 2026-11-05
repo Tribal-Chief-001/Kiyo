@@ -3,6 +3,7 @@
 use anyhow::{Result, anyhow};
 use memmap2::Mmap;
 use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,6 +16,8 @@ pub struct RarEntry {
     pub name: String,
     pub packed_size: u64,
     pub unpacked_size: u64,
+    pub data_offset: usize,
+    pub method: u8,
 }
 
 /// Comic Book Archive (.cbr) document model backed by pure-Rust header inspection.
@@ -73,6 +76,30 @@ impl CbrDocument {
             metadata,
             image_entries,
         })
+    }
+
+    /// Read raw image bytes for a frame by page index.
+    pub fn read_page_image(&self, index: usize) -> Result<Vec<u8>> {
+        if index >= self.image_entries.len() {
+            return Err(anyhow!("CBR comic page {} out of range", index));
+        }
+        let entry = &self.image_entries[index];
+        let end = entry.data_offset.saturating_add(entry.packed_size as usize);
+        if end > self.mmap.len() {
+            return Err(anyhow!("CBR entry data truncated for {}", entry.name));
+        }
+        let slice = &self.mmap[entry.data_offset..end];
+        // If stored (method == 0x30 in RAR4, or packed == unpacked), return raw bytes
+        if entry.method == 0x30 || entry.packed_size == entry.unpacked_size {
+            return Ok(slice.to_vec());
+        }
+        // If Deflate compressed, decompress
+        let mut decoder = flate2::read::DeflateDecoder::new(slice);
+        let mut out = Vec::new();
+        if decoder.read_to_end(&mut out).is_ok() && !out.is_empty() {
+            return Ok(out);
+        }
+        Ok(slice.to_vec())
     }
 
     fn parse_rar_entries(data: &[u8]) -> Result<Vec<RarEntry>> {
@@ -139,10 +166,14 @@ impl CbrDocument {
                 if name_offset + name_size <= offset + header_size {
                     let name = String::from_utf8_lossy(&data[name_offset..name_offset + name_size])
                         .to_string();
+                    let method = data[offset + 25];
+                    let data_offset = offset + header_size;
                     entries.push(RarEntry {
                         name,
                         packed_size: pack_size,
                         unpacked_size: unp_size,
+                        data_offset,
+                        method,
                     });
                 }
 
@@ -234,10 +265,13 @@ impl CbrDocument {
                     let nl = name_len as usize;
                     if offset + nl <= header_data_end {
                         let name = String::from_utf8_lossy(&data[offset..offset + nl]).to_string();
+                        let data_offset = header_data_end + extra_area_size as usize;
                         entries.push(RarEntry {
                             name,
                             packed_size: data_size,
                             unpacked_size,
+                            data_offset,
+                            method: 0,
                         });
                     }
                 }
@@ -350,5 +384,9 @@ impl SequentialArtDocument for CbrDocument {
             bounds: (0.0, 0.0, 800.0, 1200.0),
             reading_order: 0,
         }])
+    }
+
+    fn get_image_bytes(&self, index: usize) -> Result<Vec<u8>> {
+        self.read_page_image(index)
     }
 }

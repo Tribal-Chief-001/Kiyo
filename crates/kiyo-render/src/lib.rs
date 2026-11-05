@@ -256,13 +256,28 @@ impl RenderBackend for UniversalRenderBackend {
 
     fn render_tile(&self, key: TileKey, _zoom_factor: f32) -> Result<TileBuffer> {
         let tile_size = 512u32;
-        // Off-white paper background (#FAFAFA)
         let mut tile = TileBuffer::new_blank(key, tile_size, tile_size, (250, 250, 250, 255));
-
-        // Draw visual page boundary margins and subtle rule lines
         let stride = tile.stride as usize;
-        let border_color = [220u8, 220u8, 224u8, 255u8];
 
+        // 1. If sequential art (comic CBR/CBZ), render actual page image into tile
+        if let Some(seq) = self.document.as_sequential_art() {
+            if let Ok(img_bytes) = seq.get_image_bytes(key.page_index as usize) {
+                if let Ok(dyn_img) = image::load_from_memory(&img_bytes) {
+                    let rgba = dyn_img.to_rgba8();
+                    let resized = image::imageops::resize(
+                        &rgba,
+                        tile_size,
+                        tile_size,
+                        image::imageops::FilterType::Triangle,
+                    );
+                    tile.pixels.copy_from_slice(resized.as_raw());
+                    return Ok(tile);
+                }
+            }
+        }
+
+        // 2. Draw subtle border
+        let border_color = [220u8, 220u8, 224u8, 255u8];
         for y in 0..tile_size as usize {
             for x in [0usize, (tile_size - 1) as usize] {
                 let idx = y * stride + x * 4;
@@ -273,6 +288,28 @@ impl RenderBackend for UniversalRenderBackend {
             for y in [0usize, (tile_size - 1) as usize] {
                 let idx = y * stride + x * 4;
                 tile.pixels[idx..idx + 4].copy_from_slice(&border_color);
+            }
+        }
+
+        // 3. Render text lines preview onto tile if page has text
+        if let Ok(text) = self.document.extract_text(key.page_index) {
+            let text_color = [40u8, 40u8, 44u8, 255u8];
+            let mut line_y = 40usize;
+            for line in text.lines().take(24) {
+                let line_len = line.trim().len();
+                if line_len > 0 {
+                    let draw_w = (line_len * 7).min((tile_size - 80) as usize);
+                    for y in line_y..(line_y + 4).min(tile_size as usize - 10) {
+                        for x in 40..(40 + draw_w) {
+                            let idx = y * stride + x * 4;
+                            tile.pixels[idx..idx + 4].copy_from_slice(&text_color);
+                        }
+                    }
+                    line_y += 18;
+                    if line_y + 20 >= tile_size as usize {
+                        break;
+                    }
+                }
             }
         }
 

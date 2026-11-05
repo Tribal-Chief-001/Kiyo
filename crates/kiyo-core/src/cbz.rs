@@ -197,4 +197,8 @@ impl SequentialArtDocument for CbzDocument {
             reading_order: 0,
         }])
     }
+
+    fn get_image_bytes(&self, index: usize) -> Result<Vec<u8>> {
+        self.read_page_image(index)
+    }
 }

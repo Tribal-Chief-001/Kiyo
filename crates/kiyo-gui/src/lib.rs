@@ -186,10 +186,23 @@ impl IpcServer {
 
     /// Starts an active IPC server listener thread linked to the application state.
     pub fn start(state: Arc<Mutex<GuiState>>) -> Result<Self> {
+        Self::start_with_id(state, None)
+    }
+
+    /// Starts an active IPC server with an optional custom instance identifier.
+    pub fn start_with_id(state: Arc<Mutex<GuiState>>, instance_id: Option<&str>) -> Result<Self> {
         let dir = Self::socket_dir();
-        let pid = std::process::id();
-        let socket_path = dir.join(format!("{pid}.sock"));
-        let symlink_path = dir.join("active.sock");
+        let socket_name = if let Some(id) = instance_id {
+            format!("{id}.sock")
+        } else {
+            format!("{}.sock", std::process::id())
+        };
+        let socket_path = dir.join(&socket_name);
+        let symlink_path = if let Some(id) = instance_id {
+            dir.join(format!("{id}_active.sock"))
+        } else {
+            dir.join("active.sock")
+        };
 
         // Clean up stale socket file if it exists
         if socket_path.exists() {
@@ -199,11 +212,14 @@ impl IpcServer {
         let listener = UnixListener::bind(&socket_path)?;
         listener.set_nonblocking(true)?;
 
-        // Update atomic symlink
-        if symlink_path.exists() || symlink_path.is_symlink() {
-            let _ = std::fs::remove_file(&symlink_path);
+        // Update atomic symlink via temp symlink and atomic rename
+        let tmp_symlink = dir.join(format!("{}.tmp", socket_name));
+        if tmp_symlink.exists() || tmp_symlink.is_symlink() {
+            let _ = std::fs::remove_file(&tmp_symlink);
         }
-        let _ = std::os::unix::fs::symlink(&socket_path, &symlink_path);
+        if std::os::unix::fs::symlink(&socket_path, &tmp_symlink).is_ok() {
+            let _ = std::fs::rename(&tmp_symlink, &symlink_path);
+        }
 
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = Arc::clone(&running);
@@ -211,22 +227,33 @@ impl IpcServer {
 
         thread::spawn(move || {
             while running_clone.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        let mut buf = String::new();
-                        let _ = stream.read_to_string(&mut buf);
-                        if let Ok(cmd) = serde_json::from_str::<IpcCommand>(buf.trim()) {
-                            let mut app = state.lock().unwrap();
-                            let response = app.handle_ipc_command(cmd);
-                            if let Ok(resp_json) = serde_json::to_string(&response) {
-                                let _ = stream.write_all(resp_json.as_bytes());
+                let mut processed_any = false;
+                loop {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            processed_any = true;
+                            let _ = stream
+                                .set_read_timeout(Some(std::time::Duration::from_millis(500)));
+                            let _ = stream
+                                .set_write_timeout(Some(std::time::Duration::from_millis(500)));
+                            let mut buf = String::new();
+                            let _ = stream.read_to_string(&mut buf);
+                            if let Ok(cmd) = serde_json::from_str::<IpcCommand>(buf.trim()) {
+                                let mut app = state.lock().unwrap();
+                                let response = app.handle_ipc_command(cmd);
+                                if let Ok(resp_json) = serde_json::to_string(&response) {
+                                    let _ = stream.write_all(resp_json.as_bytes());
+                                }
                             }
                         }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            break;
+                        }
+                        Err(_) => return,
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(std::time::Duration::from_millis(20));
-                    }
-                    Err(_) => break,
+                }
+                if !processed_any {
+                    thread::sleep(std::time::Duration::from_millis(5));
                 }
             }
             let _ = std::fs::remove_file(socket_path_clone);
@@ -444,7 +471,8 @@ mod tests {
             s.total_pages = 50;
         }
 
-        let server = IpcServer::start(Arc::clone(&state)).expect("Start IPC server");
+        let server = IpcServer::start_with_id(Arc::clone(&state), Some("test_ipc_cmd"))
+            .expect("Start IPC server");
         assert!(server.socket_path.exists());
 
         // Connect client and send command
@@ -458,6 +486,41 @@ mod tests {
         client.read_to_string(&mut resp).unwrap();
         let status: IpcStatus = serde_json::from_str(&resp).expect("Parse response");
         assert_eq!(status.page, 25);
+
+        server.stop();
+    }
+
+    #[test]
+    fn test_ipc_concurrent_spam() {
+        let state = Arc::new(Mutex::new(GuiState::new()));
+        {
+            let mut s = state.lock().unwrap();
+            s.total_pages = 500;
+        }
+
+        let server = IpcServer::start_with_id(Arc::clone(&state), Some("test_ipc_spam"))
+            .expect("Start IPC server");
+        let symlink = server.symlink_path.clone();
+
+        let mut handles = Vec::new();
+        for i in 1..=30 {
+            let sym = symlink.clone();
+            handles.push(std::thread::spawn(move || {
+                if let Ok(mut client) = UnixStream::connect(&sym) {
+                    let cmd = IpcCommand::Goto { page: i };
+                    let cmd_bytes = serde_json::to_vec(&cmd).unwrap();
+                    let _ = client.write_all(&cmd_bytes);
+                    let _ = client.shutdown(std::net::Shutdown::Write);
+                    let mut resp = String::new();
+                    let _ = client.read_to_string(&mut resp);
+                    let _ = serde_json::from_str::<IpcStatus>(&resp);
+                }
+            }));
+        }
+
+        for h in handles {
+            let _ = h.join();
+        }
 
         server.stop();
     }
