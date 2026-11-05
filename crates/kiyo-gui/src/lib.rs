@@ -3,6 +3,7 @@
 #![allow(clippy::collapsible_if)]
 
 use anyhow::Result;
+use kiyo_render::RenderBackend;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;
@@ -399,8 +400,322 @@ impl GuiApp {
             return Ok(());
         }
 
-        // In graphical environment, window creation and event loop run here
+        // Initialize and execute the interactive winit desktop event loop
+        let event_loop = winit::event_loop::EventLoop::new()
+            .map_err(|e| anyhow::anyhow!("Failed to initialize winit event loop: {:?}", e))?;
+        
+        let mut window_app = WindowApp::new(Arc::clone(&self.state));
+        event_loop
+            .run_app(&mut window_app)
+            .map_err(|e| anyhow::anyhow!("Kiyo GUI event loop error: {:?}", e))?;
+
         Ok(())
+    }
+}
+
+/// Interactive desktop window application handler managing surface presentation and input.
+struct WindowApp {
+    state: Arc<Mutex<GuiState>>,
+    window: Option<Arc<winit::window::Window>>,
+    context: Option<softbuffer::Context<Arc<winit::window::Window>>>,
+    surface: Option<softbuffer::Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>>,
+    render_backend: Option<Arc<kiyo_render::UniversalRenderBackend>>,
+}
+
+impl WindowApp {
+    fn new(state: Arc<Mutex<GuiState>>) -> Self {
+        Self {
+            state,
+            window: None,
+            context: None,
+            surface: None,
+            render_backend: None,
+        }
+    }
+
+    fn update_title(&self) {
+        if let Some(win) = &self.window {
+            let s = self.state.lock().unwrap();
+            let name = s
+                .current_file
+                .as_ref()
+                .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                .unwrap_or_else(|| "Kiyo Reader".to_string());
+            let dark_str = if s.dark_mode { "ON" } else { "OFF" };
+            let title = format!(
+                "🌸 Kiyo — {} [Page {}/{}] [Zoom: {}%] [d: Smart Dark {}]",
+                name,
+                s.current_page + 1,
+                s.total_pages.max(1),
+                (s.zoom * 100.0) as u32,
+                dark_str
+            );
+            win.set_title(&title);
+        }
+    }
+
+    fn render_frame(
+        state: &Arc<Mutex<GuiState>>,
+        render_backend: Option<&Arc<kiyo_render::UniversalRenderBackend>>,
+        buffer: &mut [u32],
+        width: u32,
+        height: u32,
+    ) {
+        let (curr_page, zoom, dark_mode) = {
+            let s = state.lock().unwrap();
+            (s.current_page as u32, s.zoom, s.dark_mode)
+        };
+
+        // 1. Desk background color
+        let desk_bg = if dark_mode { 0x0014171C } else { 0x002B303A };
+        buffer.fill(desk_bg);
+
+        // 2. Render page if backend is loaded
+        if let Some(backend) = render_backend {
+            let tile_key = kiyo_render::TileKey {
+                page_index: curr_page,
+                level_of_detail: 0,
+                tile_col: 0,
+                tile_row: 0,
+            };
+            if let Ok(tile) = backend.render_tile(tile_key, zoom) {
+                let mut pixels = tile.pixels;
+                if dark_mode {
+                    kiyo_gpu::apply_smart_dark_cpu(&mut pixels, kiyo_gpu::DarkModeUniforms::default());
+                }
+
+                let tile_w = tile.width as usize;
+                let tile_h = tile.height as usize;
+
+                let available_h = height.saturating_sub(72) as usize;
+                let available_w = width as usize;
+
+                let start_x = if available_w > tile_w {
+                    (available_w - tile_w) / 2
+                } else {
+                    0
+                };
+                let start_y = if available_h > tile_h {
+                    40 + (available_h - tile_h) / 2
+                } else {
+                    40
+                };
+
+                for ty in 0..tile_h {
+                    let dest_y = start_y + ty;
+                    if dest_y >= height.saturating_sub(32) as usize {
+                        break;
+                    }
+                    for tx in 0..tile_w {
+                        let dest_x = start_x + tx;
+                        if dest_x >= width as usize {
+                            break;
+                        }
+                        let src_idx = (ty * tile_w + tx) * 4;
+                        let r = pixels[src_idx] as u32;
+                        let g = pixels[src_idx + 1] as u32;
+                        let b = pixels[src_idx + 2] as u32;
+                        let argb = (r << 16) | (g << 8) | b;
+
+                        let dest_idx = dest_y * width as usize + dest_x;
+                        buffer[dest_idx] = argb;
+                    }
+                }
+            }
+        }
+
+        // 3. Draw top header bar (40px high)
+        let header_bg = 0x001A1D24;
+        let header_h = 40.min(height as usize);
+        for y in 0..header_h {
+            for x in 0..width as usize {
+                buffer[y * width as usize + x] = header_bg;
+            }
+        }
+
+        // 4. Draw bottom footer bar (32px high)
+        let footer_bg = 0x0015181F;
+        let footer_start = height.saturating_sub(32) as usize;
+        for y in footer_start..height as usize {
+            for x in 0..width as usize {
+                buffer[y * width as usize + x] = footer_bg;
+            }
+        }
+    }
+}
+
+impl winit::application::ApplicationHandler for WindowApp {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+
+        let attrs = winit::window::Window::default_attributes()
+            .with_title("🌸 Kiyo Reader")
+            .with_inner_size(winit::dpi::LogicalSize::new(1024.0, 768.0));
+
+        if let Ok(window) = event_loop.create_window(attrs) {
+            let window = Arc::new(window);
+            if let Ok(context) = softbuffer::Context::new(Arc::clone(&window)) {
+                if let Ok(surface) = softbuffer::Surface::new(&context, Arc::clone(&window)) {
+                    self.context = Some(context);
+                    self.surface = Some(surface);
+                    self.window = Some(Arc::clone(&window));
+
+                    // Load document backend if file path is available
+                    let file_path = self.state.lock().unwrap().current_file.clone();
+                    if let Some(path) = file_path {
+                        if let Ok(doc) = kiyo_render::open_universal_document(&path) {
+                            let backend =
+                                Arc::new(kiyo_render::UniversalRenderBackend::new(Arc::from(doc)));
+                            let page_count = backend.page_count();
+                            {
+                                let mut s = self.state.lock().unwrap();
+                                s.total_pages = page_count as usize;
+                            }
+                            self.render_backend = Some(backend);
+                        }
+                    }
+
+                    self.update_title();
+                    window.request_redraw();
+                }
+            }
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: winit::event::WindowEvent,
+    ) {
+        match event {
+            winit::event::WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            winit::event::WindowEvent::RedrawRequested => {
+                let win_size = self.window.as_ref().map(|w| w.inner_size());
+                if let (Some(size), Some(surface)) = (win_size, &mut self.surface) {
+                    if let (Some(w), Some(h)) = (
+                        std::num::NonZeroU32::new(size.width),
+                        std::num::NonZeroU32::new(size.height),
+                    ) {
+                        if surface.resize(w, h).is_ok() {
+                            if let Ok(mut buffer) = surface.buffer_mut() {
+                                Self::render_frame(
+                                    &self.state,
+                                    self.render_backend.as_ref(),
+                                    &mut buffer,
+                                    size.width,
+                                    size.height,
+                                );
+                                let _ = buffer.present();
+                            }
+                        }
+                    }
+                }
+            }
+            winit::event::WindowEvent::KeyboardInput { event, .. } => {
+                if event.state.is_pressed() {
+                    let mut needs_redraw = false;
+                    match event.logical_key {
+                        winit::keyboard::Key::Character(ref ch) if ch == "j" || ch == " " => {
+                            let mut s = self.state.lock().unwrap();
+                            if s.current_page + 1 < s.total_pages {
+                                s.current_page += 1;
+                                needs_redraw = true;
+                            }
+                        }
+                        winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowDown)
+                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::PageDown) => {
+                            let mut s = self.state.lock().unwrap();
+                            if s.current_page + 1 < s.total_pages {
+                                s.current_page += 1;
+                                needs_redraw = true;
+                            }
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "k" => {
+                            let mut s = self.state.lock().unwrap();
+                            if s.current_page > 0 {
+                                s.current_page -= 1;
+                                needs_redraw = true;
+                            }
+                        }
+                        winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowUp)
+                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::PageUp) => {
+                            let mut s = self.state.lock().unwrap();
+                            if s.current_page > 0 {
+                                s.current_page -= 1;
+                                needs_redraw = true;
+                            }
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "d" => {
+                            let mut s = self.state.lock().unwrap();
+                            s.dark_mode = !s.dark_mode;
+                            needs_redraw = true;
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "+" || ch == "=" => {
+                            let mut s = self.state.lock().unwrap();
+                            s.zoom = (s.zoom * 1.15).min(5.0);
+                            needs_redraw = true;
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "-" => {
+                            let mut s = self.state.lock().unwrap();
+                            s.zoom = (s.zoom / 1.15).max(0.2);
+                            needs_redraw = true;
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "q" => {
+                            event_loop.exit();
+                        }
+                        winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape) => {
+                            event_loop.exit();
+                        }
+                        _ => {}
+                    }
+
+                    if needs_redraw {
+                        self.update_title();
+                        if let Some(win) = &self.window {
+                            win.request_redraw();
+                        }
+                    }
+                }
+            }
+            winit::event::WindowEvent::MouseWheel { delta, .. } => {
+                let mut needs_redraw = false;
+                match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_x, y) => {
+                        let mut s = self.state.lock().unwrap();
+                        if y < -0.1 && s.current_page + 1 < s.total_pages {
+                            s.current_page += 1;
+                            needs_redraw = true;
+                        } else if y > 0.1 && s.current_page > 0 {
+                            s.current_page -= 1;
+                            needs_redraw = true;
+                        }
+                    }
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                        let mut s = self.state.lock().unwrap();
+                        if pos.y < -10.0 && s.current_page + 1 < s.total_pages {
+                            s.current_page += 1;
+                            needs_redraw = true;
+                        } else if pos.y > 10.0 && s.current_page > 0 {
+                            s.current_page -= 1;
+                            needs_redraw = true;
+                        }
+                    }
+                }
+
+                if needs_redraw {
+                    self.update_title();
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
