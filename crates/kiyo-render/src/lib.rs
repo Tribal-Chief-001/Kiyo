@@ -8,7 +8,7 @@ use kiyo_core::{CbrDocument, CbzDocument, Document, EpubDocument, detect_format}
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Normalized PDF coordinate point (Points: 1/72 inch, origin at bottom-left).
@@ -236,11 +236,130 @@ pub trait RenderBackend: Send + Sync {
 /// Production implementation of `RenderBackend` for documents.
 pub struct UniversalRenderBackend {
     document: Arc<dyn UniversalDocument>,
+    source_path: Option<PathBuf>,
+    cache: std::sync::Mutex<HashMap<u32, Arc<image::RgbaImage>>>,
 }
 
 impl UniversalRenderBackend {
     pub fn new(document: Arc<dyn UniversalDocument>) -> Self {
-        Self { document }
+        Self {
+            document,
+            source_path: None,
+            cache: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn with_path(document: Arc<dyn UniversalDocument>, path: PathBuf) -> Self {
+        Self {
+            document,
+            source_path: Some(path),
+            cache: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Renders or retrieves the full rasterized page image.
+    pub fn get_page_image(&self, page_index: u32, max_dimension: u32) -> Result<Arc<image::RgbaImage>> {
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(img) = cache.get(&page_index) {
+                return Ok(Arc::clone(img));
+            }
+        }
+
+        // 1. If sequential art (comic CBR/CBZ), extract page image directly
+        if let Some(seq) = self.document.as_sequential_art() {
+            if let Ok(img_bytes) = seq.get_image_bytes(page_index as usize) {
+                if let Ok(dyn_img) = image::load_from_memory(&img_bytes) {
+                    let rgba = Arc::new(dyn_img.to_rgba8());
+                    let mut cache = self.cache.lock().unwrap();
+                    cache.insert(page_index, Arc::clone(&rgba));
+                    return Ok(rgba);
+                }
+            }
+        }
+
+        // 2. If PDF and source_path available, render page with pdftoppm (fast JPEG mode)
+        if let Some(path) = &self.source_path {
+            let page_num = (page_index + 1).to_string();
+            let tmp_dir = std::env::temp_dir().join(format!("kiyo_render_{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&tmp_dir);
+            let out_prefix = tmp_dir.join(format!("p_{}", page_index));
+            let scale_box = max_dimension.max(1280).to_string();
+
+            let status = std::process::Command::new("pdftoppm")
+                .args([
+                    "-jpeg",
+                    "-scale-to",
+                    &scale_box,
+                    "-f",
+                    &page_num,
+                    "-l",
+                    &page_num,
+                ])
+                .arg(path)
+                .arg(&out_prefix)
+                .status();
+
+            if let Ok(s) = status && s.success() {
+                if let Ok(entries) = std::fs::read_dir(&tmp_dir) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        let p_str = p.to_string_lossy();
+                        if p_str.contains(&format!("p_{}-", page_index)) {
+                            if let Ok(dyn_img) = image::open(&p) {
+                                let rgba = Arc::new(dyn_img.to_rgba8());
+                                let mut cache = self.cache.lock().unwrap();
+                                cache.insert(page_index, Arc::clone(&rgba));
+                                let _ = std::fs::remove_file(&p);
+                                return Ok(rgba);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback: Clean formatted document representation
+        let metrics = self.document.page_metrics(page_index).unwrap_or(PageMetrics {
+            width: 595.0,
+            height: 842.0,
+            rotation_degrees: 0,
+            dpi: 72.0,
+            media_box: (0.0, 0.0, 595.0, 842.0),
+            crop_box: None,
+            bleed_box: None,
+            trim_box: None,
+            art_box: None,
+        });
+
+        let target_w = (metrics.width * 1.5).round().max(400.0) as u32;
+        let target_h = (metrics.height * 1.5).round().max(500.0) as u32;
+        let mut img = image::RgbaImage::from_pixel(target_w, target_h, image::Rgba([255, 255, 255, 255]));
+
+        if let Ok(text) = self.document.extract_text(page_index) {
+            let text_color = image::Rgba([35, 35, 40, 255]);
+            let mut line_y = 50u32;
+            for line in text.lines().take(40) {
+                let len = line.trim().len() as u32;
+                if len > 0 {
+                    let w = (len * 8).min(target_w.saturating_sub(100));
+                    for y in line_y..(line_y + 6).min(target_h - 10) {
+                        for x in 50..(50 + w) {
+                            img.put_pixel(x, y, text_color);
+                        }
+                    }
+                    line_y += 18;
+                    if line_y + 30 >= target_h {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let rgba = Arc::new(img);
+        let mut cache = self.cache.lock().unwrap();
+        cache.insert(page_index, Arc::clone(&rgba));
+        Ok(rgba)
     }
 }
 
@@ -254,66 +373,39 @@ impl RenderBackend for UniversalRenderBackend {
         Ok((metrics.width, metrics.height))
     }
 
-    fn render_tile(&self, key: TileKey, _zoom_factor: f32) -> Result<TileBuffer> {
-        let tile_size = 512u32;
-        let mut tile = TileBuffer::new_blank(key, tile_size, tile_size, (250, 250, 250, 255));
-        let stride = tile.stride as usize;
+    fn render_tile(&self, key: TileKey, zoom_factor: f32) -> Result<TileBuffer> {
+        let max_dim = (1440.0 * zoom_factor).round() as u32;
+        let page_img = self.get_page_image(key.page_index, max_dim)?;
 
-        // 1. If sequential art (comic CBR/CBZ), render actual page image into tile
-        if let Some(seq) = self.document.as_sequential_art() {
-            if let Ok(img_bytes) = seq.get_image_bytes(key.page_index as usize) {
-                if let Ok(dyn_img) = image::load_from_memory(&img_bytes) {
-                    let rgba = dyn_img.to_rgba8();
-                    let resized = image::imageops::resize(
-                        &rgba,
-                        tile_size,
-                        tile_size,
-                        image::imageops::FilterType::Triangle,
-                    );
-                    tile.pixels.copy_from_slice(resized.as_raw());
-                    return Ok(tile);
-                }
-            }
-        }
+        let orig_w = page_img.width();
+        let orig_h = page_img.height();
 
-        // 2. Draw subtle border
-        let border_color = [220u8, 220u8, 224u8, 255u8];
-        for y in 0..tile_size as usize {
-            for x in [0usize, (tile_size - 1) as usize] {
-                let idx = y * stride + x * 4;
-                tile.pixels[idx..idx + 4].copy_from_slice(&border_color);
-            }
-        }
-        for x in 0..tile_size as usize {
-            for y in [0usize, (tile_size - 1) as usize] {
-                let idx = y * stride + x * 4;
-                tile.pixels[idx..idx + 4].copy_from_slice(&border_color);
-            }
-        }
+        let target_w = ((orig_w as f32) * zoom_factor).round().max(80.0) as u32;
+        let target_h = ((orig_h as f32) * zoom_factor).round().max(80.0) as u32;
 
-        // 3. Render text lines preview onto tile if page has text
-        if let Ok(text) = self.document.extract_text(key.page_index) {
-            let text_color = [40u8, 40u8, 44u8, 255u8];
-            let mut line_y = 40usize;
-            for line in text.lines().take(24) {
-                let line_len = line.trim().len();
-                if line_len > 0 {
-                    let draw_w = (line_len * 7).min((tile_size - 80) as usize);
-                    for y in line_y..(line_y + 4).min(tile_size as usize - 10) {
-                        for x in 40..(40 + draw_w) {
-                            let idx = y * stride + x * 4;
-                            tile.pixels[idx..idx + 4].copy_from_slice(&text_color);
-                        }
-                    }
-                    line_y += 18;
-                    if line_y + 20 >= tile_size as usize {
-                        break;
-                    }
-                }
-            }
-        }
+        let resized = if (target_w == orig_w && target_h == orig_h) || zoom_factor == 1.0 {
+            page_img.as_ref().clone()
+        } else {
+            image::imageops::resize(
+                page_img.as_ref(),
+                target_w,
+                target_h,
+                image::imageops::FilterType::Triangle,
+            )
+        };
 
-        Ok(tile)
+        let width = resized.width();
+        let height = resized.height();
+        let stride = width * 4;
+        let pixels = resized.into_raw();
+
+        Ok(TileBuffer {
+            key,
+            width,
+            height,
+            stride,
+            pixels,
+        })
     }
 
     fn extract_text_runs(&self, page_index: u32) -> Result<Vec<TextRun>> {
@@ -673,9 +765,9 @@ mod tests {
             tile_row: 0,
         };
         let tile = backend.render_tile(tile_key, 1.0).expect("Render tile");
-        assert_eq!(tile.width, 512);
-        assert_eq!(tile.height, 512);
-        assert_eq!(tile.pixels.len(), 512 * 512 * 4);
+        assert!(tile.width > 500);
+        assert!(tile.height > 700);
+        assert_eq!(tile.pixels.len(), (tile.width * tile.height * 4) as usize);
 
         let search_hits = backend.search("Performance", true).expect("Search text");
         assert_eq!(search_hits.len(), 1);

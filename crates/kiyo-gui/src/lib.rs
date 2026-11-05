@@ -5,6 +5,8 @@
 use anyhow::Result;
 use kiyo_render::RenderBackend;
 use serde::{Deserialize, Serialize};
+
+pub mod font;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
@@ -420,6 +422,7 @@ struct WindowApp {
     context: Option<softbuffer::Context<Arc<winit::window::Window>>>,
     surface: Option<softbuffer::Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>>,
     render_backend: Option<Arc<kiyo_render::UniversalRenderBackend>>,
+    cursor_pos: (f64, f64),
 }
 
 impl WindowApp {
@@ -430,6 +433,7 @@ impl WindowApp {
             context: None,
             surface: None,
             render_backend: None,
+            cursor_pos: (0.0, 0.0),
         }
     }
 
@@ -441,9 +445,9 @@ impl WindowApp {
                 .as_ref()
                 .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
                 .unwrap_or_else(|| "Kiyo Reader".to_string());
-            let dark_str = if s.dark_mode { "ON" } else { "OFF" };
+            let dark_str = if s.dark_mode { "Smart Dark ON" } else { "Smart Dark OFF" };
             let title = format!(
-                "🌸 Kiyo — {} [Page {}/{}] [Zoom: {}%] [d: Smart Dark {}]",
+                "🌸 Kiyo — {} — Page {} of {} ({}%) [{}]",
                 name,
                 s.current_page + 1,
                 s.total_pages.max(1),
@@ -461,16 +465,29 @@ impl WindowApp {
         width: u32,
         height: u32,
     ) {
-        let (curr_page, zoom, dark_mode) = {
+        let (curr_page, total_pages, zoom, dark_mode, file_name) = {
             let s = state.lock().unwrap();
-            (s.current_page as u32, s.zoom, s.dark_mode)
+            let name = s
+                .current_file
+                .as_ref()
+                .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                .unwrap_or_else(|| "Kiyo Document".to_string());
+            (s.current_page as u32, s.total_pages.max(1), s.zoom, s.dark_mode, name)
         };
 
+        let w_usize = width as usize;
+        let h_usize = height as usize;
+
         // 1. Desk background color
-        let desk_bg = if dark_mode { 0x0014171C } else { 0x002B303A };
+        let desk_bg = if dark_mode { 0x000F1115 } else { 0x001E222A };
         buffer.fill(desk_bg);
 
-        // 2. Render page if backend is loaded
+        let header_h = 48usize;
+        let footer_h = 32usize;
+        let canvas_y = header_h;
+        let canvas_h = h_usize.saturating_sub(header_h + footer_h);
+
+        // 2. Render document page
         if let Some(backend) = render_backend {
             let tile_key = kiyo_render::TileKey {
                 page_index: curr_page,
@@ -478,68 +495,139 @@ impl WindowApp {
                 tile_col: 0,
                 tile_row: 0,
             };
-            if let Ok(tile) = backend.render_tile(tile_key, zoom) {
-                let mut pixels = tile.pixels;
+
+            // Compute available viewport
+            let avail_w = w_usize.saturating_sub(48) as f32;
+            let avail_h = canvas_h.saturating_sub(48) as f32;
+
+            if let Ok(tile) = backend.render_tile(tile_key, 1.0) {
+                let orig_w = tile.width as f32;
+                let orig_h = tile.height as f32;
+
+                // Auto-fit scale to comfortably display within viewport, modified by user zoom
+                let fit_scale = (avail_w / orig_w).min(avail_h / orig_h).max(0.05);
+                let effective_scale = fit_scale * zoom;
+
+                let draw_w = ((orig_w * effective_scale).round() as usize).max(40);
+                let draw_h = ((orig_h * effective_scale).round() as usize).max(40);
+
+                let start_x = if w_usize > draw_w {
+                    (w_usize - draw_w) / 2
+                } else {
+                    16
+                };
+                let start_y = if canvas_h > draw_h {
+                    canvas_y + (canvas_h - draw_h) / 2
+                } else {
+                    canvas_y + 16
+                };
+
+                // Draw drop shadow behind page
+                let shadow_pad = 6usize;
+                let shadow_x = start_x.saturating_sub(shadow_pad);
+                let shadow_y = start_y.saturating_sub(shadow_pad);
+                let shadow_w = draw_w + shadow_pad * 2;
+                let shadow_h = draw_h + shadow_pad * 2;
+                let shadow_col = if dark_mode { 0x00060709 } else { 0x00101216 };
+                font::fill_rect(buffer, w_usize, h_usize, shadow_x, shadow_y, shadow_w, shadow_h, shadow_col);
+
+                // Page pixels
+                let mut page_pixels = tile.pixels;
                 if dark_mode {
-                    kiyo_gpu::apply_smart_dark_cpu(&mut pixels, kiyo_gpu::DarkModeUniforms::default());
+                    kiyo_gpu::apply_smart_dark_cpu(&mut page_pixels, kiyo_gpu::DarkModeUniforms::default());
                 }
 
-                let tile_w = tile.width as usize;
-                let tile_h = tile.height as usize;
+                let src_w = tile.width as usize;
+                let src_h = tile.height as usize;
 
-                let available_h = height.saturating_sub(72) as usize;
-                let available_w = width as usize;
-
-                let start_x = if available_w > tile_w {
-                    (available_w - tile_w) / 2
-                } else {
-                    0
-                };
-                let start_y = if available_h > tile_h {
-                    40 + (available_h - tile_h) / 2
-                } else {
-                    40
-                };
-
-                for ty in 0..tile_h {
-                    let dest_y = start_y + ty;
-                    if dest_y >= height.saturating_sub(32) as usize {
+                for dy in 0..draw_h {
+                    let dest_y = start_y + dy;
+                    if dest_y >= canvas_y + canvas_h || dest_y >= h_usize {
                         break;
                     }
-                    for tx in 0..tile_w {
-                        let dest_x = start_x + tx;
-                        if dest_x >= width as usize {
+                    let sy = (dy * src_h) / draw_h;
+                    let dest_row = dest_y * w_usize;
+                    let src_row = sy * src_w * 4;
+
+                    for dx in 0..draw_w {
+                        let dest_x = start_x + dx;
+                        if dest_x >= w_usize {
                             break;
                         }
-                        let src_idx = (ty * tile_w + tx) * 4;
-                        let r = pixels[src_idx] as u32;
-                        let g = pixels[src_idx + 1] as u32;
-                        let b = pixels[src_idx + 2] as u32;
+                        let sx = (dx * src_w) / draw_w;
+                        let s_idx = src_row + sx * 4;
+                        let r = page_pixels[s_idx] as u32;
+                        let g = page_pixels[s_idx + 1] as u32;
+                        let b = page_pixels[s_idx + 2] as u32;
                         let argb = (r << 16) | (g << 8) | b;
-
-                        let dest_idx = dest_y * width as usize + dest_x;
-                        buffer[dest_idx] = argb;
+                        buffer[dest_row + dest_x] = argb;
                     }
                 }
+
+                // 1px crisp outline border around page
+                font::draw_rect_border(buffer, w_usize, h_usize, start_x, start_y, draw_w, draw_h, 0x00454D5D);
             }
         }
 
-        // 3. Draw top header bar (40px high)
-        let header_bg = 0x001A1D24;
-        let header_h = 40.min(height as usize);
-        for y in 0..header_h {
-            for x in 0..width as usize {
-                buffer[y * width as usize + x] = header_bg;
-            }
+        // 3. Top Header Bar (Height: 48px)
+        let header_bg = 0x0016181E;
+        let border_line = 0x002B303C;
+        font::fill_rect(buffer, w_usize, h_usize, 0, 0, w_usize, header_h, header_bg);
+        font::draw_rect_border(buffer, w_usize, h_usize, 0, header_h - 1, w_usize, 1, border_line);
+
+        // Header - Left: Brand & File Badge
+        font::draw_pill(buffer, w_usize, h_usize, 12, 10, 68, 28, 0x002D1528, 0x00EC4899, "KIYO", 0x00F472B6);
+        let max_name_len = (w_usize.saturating_sub(450) / 8).clamp(8, 32);
+        let trunc_name: String = if file_name.len() > max_name_len {
+            format!("{}...", &file_name[..max_name_len.saturating_sub(3)])
+        } else {
+            file_name.clone()
+        };
+        font::draw_pill(buffer, w_usize, h_usize, 88, 10, trunc_name.len() * 7 + 16, 28, 0x0022262E, 0x003A404D, &trunc_name, 0x00E2E8F0);
+
+        // Header - Center: Navigation Bar
+        let nav_center_x = (w_usize / 2).saturating_sub(110);
+        font::draw_pill(buffer, w_usize, h_usize, nav_center_x, 10, 60, 28, 0x00262A34, 0x003D4453, "< Prev", 0x00CBD5E1);
+        let page_text = format!("Page {} / {}", curr_page + 1, total_pages);
+        font::draw_pill(buffer, w_usize, h_usize, nav_center_x + 68, 10, 100, 28, 0x001B1E26, 0x004F46E5, &page_text, 0x00818CF8);
+        font::draw_pill(buffer, w_usize, h_usize, nav_center_x + 176, 10, 60, 28, 0x00262A34, 0x003D4453, "Next >", 0x00CBD5E1);
+
+        // Header - Right: Zoom and Mode Controls
+        if w_usize > 750 {
+            let right_start = w_usize.saturating_sub(260);
+            font::draw_pill(buffer, w_usize, h_usize, right_start, 10, 28, 28, 0x00262A34, 0x003D4453, "-", 0x00CBD5E1);
+            let zoom_text = format!("{}%", (zoom * 100.0) as u32);
+            font::draw_pill(buffer, w_usize, h_usize, right_start + 34, 10, 52, 28, 0x001B1E26, 0x003D4453, &zoom_text, 0x00E2E8F0);
+            font::draw_pill(buffer, w_usize, h_usize, right_start + 92, 10, 28, 28, 0x00262A34, 0x003D4453, "+", 0x00CBD5E1);
+
+            let (dark_bg, dark_border, dark_text, dark_lbl) = if dark_mode {
+                (0x002B1842, 0x00A855F7, 0x00C084FC, "Dark: ON")
+            } else {
+                (0x0022262E, 0x003A404D, 0x0094A3B8, "Dark: OFF")
+            };
+            font::draw_pill(buffer, w_usize, h_usize, right_start + 128, 10, 88, 28, dark_bg, dark_border, dark_lbl, dark_text);
         }
 
-        // 4. Draw bottom footer bar (32px high)
-        let footer_bg = 0x0015181F;
-        let footer_start = height.saturating_sub(32) as usize;
-        for y in footer_start..height as usize {
-            for x in 0..width as usize {
-                buffer[y * width as usize + x] = footer_bg;
-            }
+        // 4. Bottom Footer Status Bar (Height: 32px)
+        let footer_y = h_usize.saturating_sub(footer_h);
+        let footer_bg = 0x00121418;
+        font::fill_rect(buffer, w_usize, h_usize, 0, footer_y, w_usize, footer_h, footer_bg);
+        font::draw_rect_border(buffer, w_usize, h_usize, 0, footer_y, w_usize, 1, 0x0022262E);
+
+        // Footer - Left: Document Info
+        let footer_info = format!("{} • Page {} of {}", file_name, curr_page + 1, total_pages);
+        font::draw_text(buffer, w_usize, h_usize, 16, footer_y + 10, &footer_info, 0x0094A3B8);
+
+        // Footer - Right: Shortcuts
+        let shortcuts = "[j/k: Turn Page]   [d: Dark Mode]   [+/-: Zoom]   [0: Reset]   [q: Quit]";
+        let sc_len = shortcuts.len() * 7;
+        let sc_x = if w_usize > sc_len + 30 {
+            w_usize - sc_len - 16
+        } else {
+            w_usize / 2
+        };
+        if w_usize > 600 {
+            font::draw_text(buffer, w_usize, h_usize, sc_x, footer_y + 10, shortcuts, 0x0064748B);
         }
     }
 }
@@ -552,7 +640,7 @@ impl winit::application::ApplicationHandler for WindowApp {
 
         let attrs = winit::window::Window::default_attributes()
             .with_title("🌸 Kiyo Reader")
-            .with_inner_size(winit::dpi::LogicalSize::new(1024.0, 768.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 840.0));
 
         if let Ok(window) = event_loop.create_window(attrs) {
             let window = Arc::new(window);
@@ -566,8 +654,10 @@ impl winit::application::ApplicationHandler for WindowApp {
                     let file_path = self.state.lock().unwrap().current_file.clone();
                     if let Some(path) = file_path {
                         if let Ok(doc) = kiyo_render::open_universal_document(&path) {
-                            let backend =
-                                Arc::new(kiyo_render::UniversalRenderBackend::new(Arc::from(doc)));
+                            let backend = Arc::new(kiyo_render::UniversalRenderBackend::with_path(
+                                Arc::from(doc),
+                                path.clone(),
+                            ));
                             let page_count = backend.page_count();
                             {
                                 let mut s = self.state.lock().unwrap();
@@ -616,6 +706,64 @@ impl winit::application::ApplicationHandler for WindowApp {
                     }
                 }
             }
+            winit::event::WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = (position.x, position.y);
+            }
+            winit::event::WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => {
+                let (cx, cy) = self.cursor_pos;
+                let mut needs_redraw = false;
+                if cy <= 48.0 {
+                    let win_w = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.inner_size().width as f64)
+                        .unwrap_or(1024.0);
+                    let nav_center_x = (win_w / 2.0) - 110.0;
+                    let right_start = win_w - 260.0;
+
+                    let mut s = self.state.lock().unwrap();
+                    // Click Prev button (< Prev at nav_center_x..nav_center_x+60)
+                    if cx >= nav_center_x && cx <= nav_center_x + 60.0 {
+                        if s.current_page > 0 {
+                            s.current_page -= 1;
+                            needs_redraw = true;
+                        }
+                    }
+                    // Click Next button (Next > at nav_center_x+176..nav_center_x+236)
+                    else if cx >= nav_center_x + 176.0 && cx <= nav_center_x + 236.0 {
+                        if s.current_page + 1 < s.total_pages {
+                            s.current_page += 1;
+                            needs_redraw = true;
+                        }
+                    }
+                    // Click Zoom Out (-)
+                    else if cx >= right_start && cx <= right_start + 28.0 {
+                        s.zoom = (s.zoom / 1.15).max(0.2);
+                        needs_redraw = true;
+                    }
+                    // Click Zoom In (+)
+                    else if cx >= right_start + 92.0 && cx <= right_start + 120.0 {
+                        s.zoom = (s.zoom * 1.15).min(5.0);
+                        needs_redraw = true;
+                    }
+                    // Click Dark Mode Toggle
+                    else if cx >= right_start + 128.0 && cx <= right_start + 216.0 {
+                        s.dark_mode = !s.dark_mode;
+                        needs_redraw = true;
+                    }
+                }
+
+                if needs_redraw {
+                    self.update_title();
+                    if let Some(win) = &self.window {
+                        win.request_redraw();
+                    }
+                }
+            }
             winit::event::WindowEvent::KeyboardInput { event, .. } => {
                 if event.state.is_pressed() {
                     let mut needs_redraw = false;
@@ -628,7 +776,8 @@ impl winit::application::ApplicationHandler for WindowApp {
                             }
                         }
                         winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowDown)
-                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::PageDown) => {
+                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::PageDown)
+                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowRight) => {
                             let mut s = self.state.lock().unwrap();
                             if s.current_page + 1 < s.total_pages {
                                 s.current_page += 1;
@@ -643,10 +792,24 @@ impl winit::application::ApplicationHandler for WindowApp {
                             }
                         }
                         winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowUp)
-                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::PageUp) => {
+                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::PageUp)
+                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowLeft)
+                        | winit::keyboard::Key::Named(winit::keyboard::NamedKey::Backspace) => {
                             let mut s = self.state.lock().unwrap();
                             if s.current_page > 0 {
                                 s.current_page -= 1;
+                                needs_redraw = true;
+                            }
+                        }
+                        winit::keyboard::Key::Named(winit::keyboard::NamedKey::Home) => {
+                            let mut s = self.state.lock().unwrap();
+                            s.current_page = 0;
+                            needs_redraw = true;
+                        }
+                        winit::keyboard::Key::Named(winit::keyboard::NamedKey::End) => {
+                            let mut s = self.state.lock().unwrap();
+                            if s.total_pages > 0 {
+                                s.current_page = s.total_pages - 1;
                                 needs_redraw = true;
                             }
                         }
@@ -663,6 +826,21 @@ impl winit::application::ApplicationHandler for WindowApp {
                         winit::keyboard::Key::Character(ref ch) if ch == "-" => {
                             let mut s = self.state.lock().unwrap();
                             s.zoom = (s.zoom / 1.15).max(0.2);
+                            needs_redraw = true;
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "0" => {
+                            let mut s = self.state.lock().unwrap();
+                            s.zoom = 1.0;
+                            needs_redraw = true;
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "w" => {
+                            let mut s = self.state.lock().unwrap();
+                            s.zoom = 1.35;
+                            needs_redraw = true;
+                        }
+                        winit::keyboard::Key::Character(ref ch) if ch == "p" => {
+                            let mut s = self.state.lock().unwrap();
+                            s.zoom = 1.0;
                             needs_redraw = true;
                         }
                         winit::keyboard::Key::Character(ref ch) if ch == "q" => {
