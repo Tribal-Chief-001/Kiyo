@@ -193,7 +193,7 @@ Webtoons and Korean Manhwa are authorially formatted as single continuous vertic
 
 ## 4. The Polymorphic `UniversalDocument` Trait Topology
 
-To expose uniform capabilities to `kiyo-gui`, `kiyo-tui`, and `kiyo-cli`, all format engines implement the `UniversalDocument` trait hierarchy defined in `crates/kiyo-core/src/universal.rs`.
+To expose uniform capabilities to `kiyo-gui` and `kiyo-cli`, all format engines implement the `UniversalDocument` trait hierarchy defined in `crates/kiyo-core/src/universal.rs`.
 
 ```rust
 pub trait UniversalDocument: Send + Sync {

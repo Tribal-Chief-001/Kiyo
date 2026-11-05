@@ -285,7 +285,7 @@ ISO 32000-1 solves this via the `/ByteRange` array:
 
 ## 8. Light-Table Page Organizer Architecture
 
-The Light-Table Canvas in `kiyo-gui` and `kiyo-tui` provides seamless structural document reorganization:
+The Light-Table Canvas in `kiyo-gui` provides seamless structural document reorganization:
 - **Visual Grid Presentation**: High-speed thumbnail caching using GPU mipmaps.
 - **Drag-and-Drop Reordering**: Multi-selection reordering mutating the PDF `/Pages` tree with $O(1)$ node splicing.
 - **Arbitrary Angle Rotation**: Mutates the `/Rotate` integer attribute (0°, 90°, 180°, 270°) without expensive raster re-encoding.

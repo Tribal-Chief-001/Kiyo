@@ -339,7 +339,7 @@ pub fn inject_invisible_text_layer(
 
 | Metric / Scenario | Target Specification | Measurement Validation Methodology |
 | :--- | :--- | :--- |
-| **Cold Start (TUI / CLI)** | **< 15 ms** | Measured with `hyperfine` from execve to first terminal buffer render |
+| **Cold Start (CLI)**       | **< 8 ms**  | Measured with `hyperfine` from execve to process completion |
 | **Cold Start (GUI / wgpu)**| **< 28 ms** | Measured from execve to initial Vulkan surface `present()` call |
 | **RAM Footprint (Idle)**   | **< 28 MiB RSS** | Verified via Linux `/proc/[pid]/smaps_rollup` (Private_Dirty + Pss) |
 | **RAM (1,000-page Doc)**   | **< 65 MiB RSS** | Lazy page mapping with `memmap2`; only visible tiles pinned in RAM |

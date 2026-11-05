@@ -61,7 +61,7 @@ Conditions=selection_count=>1;mimetype=application/pdf;
 [Desktop Entry]
 Name=Kiyo
 GenericName=PDF Viewer & Manipulator
-Comment=High-framerate GPU-accelerated PDF viewer, TUI, and document engine
+Comment=High-framerate GPU-accelerated PDF viewer and document engine
 Exec=kiyo gui %U
 Terminal=false
 Type=Application
@@ -69,11 +69,7 @@ Icon=org.kiyo.Kiyo
 Categories=Office;Viewer;Graphics;Publishing;
 MimeType=application/pdf;application/x-pdf;application/x-bzpdf;application/x-gzpdf;
 Keywords=PDF;Viewer;Document;OCR;Diff;GPU;Vim;
-Actions=TuiMode;DiffMode;
-
-[Desktop Action TuiMode]
-Name=Open in Terminal Viewer (TUI)
-Exec=x-terminal-emulator -e kiyo tui %U
+Actions=DiffMode;
 
 [Desktop Action DiffMode]
 Name=Compare Two PDFs

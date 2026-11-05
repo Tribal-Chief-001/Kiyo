@@ -9,7 +9,7 @@ In 2026, Linux users—particularly power users on distributions like Linux Mint
 3. **GPU Neglect**: Desktop PDF viewers render via synchronous CPU pipelines (Poppler or MuPDF) running on the UI main thread. Scrolling through a 200-page complex CAD drawing or academic paper triggers noticeable stutter, dropping frame rates below 30 FPS.
 4. **Desktop Environment Friction**: GTK4/libadwaita apps (GNOME Papers) look out of place and fight window managers in Cinnamon/XFCE/MATE; KDE apps (Okular) pull in hundreds of megabytes of Qt/KDE framework dependencies; minimal apps (Zathura) lack integrated desktop menus, Nemo actions, or system D-Bus theme tracking.
 
-`Kiyo` unifies high-framerate GPU-accelerated viewing (GUI), terminal viewing (TUI), and headless manipulation (CLI) into a single, cohesive Rust ecosystem.
+`Kiyo` unifies high-framerate GPU-accelerated viewing (GUI) and headless manipulation (CLI) into a single, cohesive Rust ecosystem.
 
 ---
 
@@ -19,13 +19,13 @@ In 2026, Linux users—particularly power users on distributions like Linux Mint
 +----------------------------------------------------------------------------------------------------+
 |                                    PDF Tool Ecosystem Spectrum                                     |
 +----------------------------------------------------------------------------------------------------+
-  [GUI Academic / Reading]        [Minimalist CLI / TUI]        [Heavy Manipulation / Web]
+  [GUI Academic / Reading]        [Minimalist CLI / Tools]      [Heavy Manipulation / Web]
       - Sioyek                        - Zathura                     - Stirling-PDF
       - Evince / Xreader              - pdfcpu                      - PDFtk / QPDF
       - GNOME Papers                                                - Master PDF Editor (Proprietary)
       - Okular
 ------------------------------------------------------------------------------------------------------
-  ==> KIYO: Unified High-Framerate GPU Viewer (GUI) + Modal Terminal Viewer (TUI) + Headless CLI Engine
+  ==> KIYO: Unified High-Framerate GPU Desktop Viewer (GUI) + Headless Automation Engine (CLI)
 ```
 
 ### 2.1. Evince / Xreader (GNOME Baseline & Linux Mint Cinnamon Default)
@@ -51,7 +51,7 @@ In 2026, Linux users—particularly power users on distributions like Linux Mint
 - **Fatal Deficiencies**:
   - **Dependency Bloat on Non-KDE Desktops**: Installing Okular on Linux Mint Cinnamon pulls in 150MB+ of KDE/Qt runtime dependencies.
   - **High Memory Footprint**: Idle memory easily exceeds 220MB; 1000-page documents can climb past 500MB RSS.
-  - **No Modern TUI/CLI Synergy**: Okular is strictly a desktop GUI app; it offers no terminal viewing mode and no scriptable CLI workflow.
+  - **No Headless CLI Synergy**: Okular is strictly a desktop GUI app; it offers no scriptable headless CLI workflow.
 
 ### 2.4. Zathura (pwmt)
 - **Architecture**: C, minimal GTK window shell, plugin architecture (`zathura-pdf-mupdf`, `zathura-pdf-poppler`).
@@ -68,7 +68,7 @@ In 2026, Linux users—particularly power users on distributions like Linux Mint
 - **Fatal Deficiencies**:
   - **Legacy Qt/MuPDF Architecture**: MuPDF's licensing (AGPL/Commercial) creates friction. Qt-based UI lacks deep Wayland/fractional scaling optimization.
   - **Zero Document Manipulation**: Sioyek is strictly a viewer; it cannot reorder pages, merge chapters, diff revisions, or repair corrupted xref tables.
-  - **No TUI / Terminal Support**: Impossible to use over SSH or inside terminal workspaces like Tmux or Zellij.
+  - **No Headless CLI Automation**: Sioyek is strictly an interactive GUI app; it cannot be scripted in headless terminal pipelines or generate file manager thumbnails.
   - **Dark Mode Limitations**: Uses basic color remapping; does not apply perceptual Oklab luminance transforms to preserve embedded artwork.
 
 ### 2.6. pdfcpu
@@ -77,7 +77,7 @@ In 2026, Linux users—particularly power users on distributions like Linux Mint
 - **Fatal Deficiencies**:
   - **Zero Rendering Capabilities**: Strictly a headless structural tool; cannot rasterize, view, or preview documents.
   - **Incomplete Spec Coverage**: Fails on unusual or slightly malformed PDF objects, crashing where Poppler or PDFium would transparently recover.
-  - **No Terminal Graphics**: Cannot display pages inside terminal emulators.
+  - **No Interactive Desktop Viewer**: Cannot launch or preview documents in an interactive GUI.
 
 ### 2.7. Stirling-PDF / PDFtk / QPDF
 - **Architecture**:
@@ -106,7 +106,7 @@ The following matrix compares Kiyo's measured design targets against top competi
 | Benchmark / Capability | Evince (Xreader) | GNOME Papers | Okular | Zathura (MuPDF) | Sioyek | pdfcpu | Stirling-PDF | **Kiyo (Target)** |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Cold Start Latency (ms)** | 185 ms | 210 ms | 340 ms | 65 ms | 140 ms | 22 ms | > 3500 ms | **< 18 ms** |
-| **Idle Memory RSS (MB)** | 78 MB | 92 MB | 230 MB | 48 MB | 110 MB | 14 MB | > 650 MB | **< 28 MB** (GUI), **< 12 MB** (CLI/TUI) |
+| **Idle Memory RSS (MB)** | 78 MB | 92 MB | 230 MB | 48 MB | 110 MB | 14 MB | > 650 MB | **< 28 MB** (GUI), **< 10 MB** (CLI) |
 | **Memory for 1,000-Page PDF** | 240 MB | 260 MB | 480 MB | 120 MB | 210 MB | N/A (CLI) | N/A (Server) | **< 65 MB** (mmap2 streaming) |
 | **4K Page Rasterization Time** | 42 ms | 38 ms | 45 ms | 28 ms | 26 ms | N/A | 110 ms | **< 8 ms** (Parallel IPC pool) |
 | **Hardware GPU Acceleration** | None (CPU) | Basic Cairo/GPU | None (CPU) | None (CPU) | None (CPU) | None | None | **Full wgpu (Vulkan/GLES)** |
@@ -116,7 +116,7 @@ The following matrix compares Kiyo's measured design targets against top competi
 | **Atomic Live Reload** | Stutter reload | Stutter reload | Reloads view | Fast reload | Fast reload | N/A | N/A | **Zero-Flicker Buffer Swap** |
 | **Offline Neural OCR** | No | No | Optional Tesseract | No | No | No | External Python | **Embedded ocrs + rten (Zero C++)** |
 | **Headless CLI Toolkit** | No | No | No | No | No | Yes (CLI only) | Yes (Web API) | **Complete Clap v4 Subcommand Suite** |
-| **Terminal Graphics TUI** | No | No | No | No | No | No | No | **Full TUI (Kitty/Sixel/iTerm2/ANSI)** |
+| **File Manager Context Actions** | Yes (Xreader) | No | No | No | No | No | No | **Full Nemo Actions + High-Speed Thumbs** |
 | **Visual XOR Revision Diff** | No | No | No | No | No | No | Basic Overlay | **Real-time GPU Pixel/Vector Diff** |
 | **Linux Mint Desktop Native** | Yes (Xreader) | No (Adwaita) | No (KDE) | Minimalist | No (Generic Qt)| CLI | Web Browser | **Nemo Context Actions + D-Bus Theme** |
 
@@ -131,7 +131,7 @@ Kiyo achieves its decisive advantage by rejecting the legacy 1990s desktop softw
 |                                    Kiyo's Strategic Moat Architecture                                   |
 +---------------------------------------------------------------------------------------------------------+
 | 1. Single Hermetic Binary | Zero external shared-library crashes; ships as a unified binary containing  |
-|                           | GUI, TUI, and CLI workflows.                                                |
+|                           | high-framerate GPU desktop viewer and headless CLI workflows.               |
 +---------------------------+-----------------------------------------------------------------------------+
 | 2. wgpu Presentation      | 120Hz/144Hz high-refresh displays rendered via Vulkan pipelines, completely  |
 |                           | offloading compositing from the CPU.                                        |

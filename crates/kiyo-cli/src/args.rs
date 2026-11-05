@@ -1,6 +1,6 @@
 //! Command-line interface grammar and argument parsing for `kiyo-cli`.
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 /// High-performance PDF engine, viewer, and document manipulation suite.
@@ -9,7 +9,7 @@ use std::path::PathBuf;
     name = "kiyo",
     version = "0.1.0",
     about = "Ultra-high-performance PDF engine, viewer, and document manipulation suite",
-    long_about = "Kiyo unifies GPU-accelerated viewing (GUI), terminal graphical viewing (TUI), and headless manipulation (CLI) into a single cohesive Rust system."
+    long_about = "Kiyo unifies GPU-accelerated viewing (GUI) and headless manipulation (CLI) into a single cohesive Rust system."
 )]
 pub struct Cli {
     /// Suppress all informational output
@@ -23,7 +23,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Path to PDF file to open (defaults to launching GUI or TUI)
+    /// Path to PDF file to open (defaults to launching GPU desktop viewer)
     #[arg(value_name = "FILE")]
     pub default_file: Option<PathBuf>,
 }
@@ -32,9 +32,6 @@ pub struct Cli {
 pub enum Commands {
     /// Launch the high-framerate hardware-accelerated desktop viewer
     Gui(GuiArgs),
-
-    /// Launch the modal terminal graphical viewer
-    Tui(TuiArgs),
 
     /// Concatenate multiple PDF documents into a single unified file
     Merge(MergeArgs),
@@ -173,26 +170,6 @@ pub struct GuiArgs {
     /// Enable smart luminance-preserving dark mode
     #[arg(long)]
     pub dark: bool,
-}
-
-#[derive(Args, Debug, PartialEq)]
-pub struct TuiArgs {
-    /// Path to PDF file to open
-    #[arg(value_name = "FILE")]
-    pub file: Option<PathBuf>,
-
-    /// Forced terminal graphics protocol
-    #[arg(long, value_enum, default_value = "auto")]
-    pub graphics: TerminalGraphicsMode,
-}
-
-#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TerminalGraphicsMode {
-    Auto,
-    Kitty,
-    Sixel,
-    Iterm2,
-    Halfblock,
 }
 
 #[derive(Args, Debug, PartialEq)]

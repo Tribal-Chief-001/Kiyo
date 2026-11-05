@@ -6,7 +6,6 @@ members = [
     "crates/kiyo-gpu",
     "crates/kiyo-ocr",
     "crates/kiyo-gui",
-    "crates/kiyo-tui",
     "crates/kiyo-cli",
 ]
 
@@ -19,7 +18,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Tribal-Chief-001/Kiyo"
 homepage = "https://github.com/Tribal-Chief-001/Kiyo"
 documentation = "https://github.com/Tribal-Chief-001/Kiyo#readme"
-keywords = ["pdf", "viewer", "gpu", "ocr", "tui", "linux-mint", "wayland"]
+keywords = ["pdf", "viewer", "gpu", "ocr", "cli", "linux-mint", "wayland"]
 categories = ["command-line-utilities", "graphics", "visualization", "text-processing"]
 
 [workspace.dependencies]
@@ -29,7 +28,6 @@ kiyo-render = { path = "crates/kiyo-render" }
 kiyo-gpu = { path = "crates/kiyo-gpu" }
 kiyo-ocr = { path = "crates/kiyo-ocr" }
 kiyo-gui = { path = "crates/kiyo-gui" }
-kiyo-tui = { path = "crates/kiyo-tui" }
 
 # PDF Parsing, Manipulation & Generation
 lopdf = { version = "0.47", default-features = false }
@@ -56,13 +54,6 @@ tiny-skia = "0.11"
 ocrs = "0.13"
 rten = "0.27"
 rten-tensor = "0.27"
-
-# Terminal UI & Terminal Graphics Engine
-ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
-crossterm = { version = "0.29.0", features = ["event-stream", "bracketed-paste"] }
-ratatui-image = { version = "11.1", default-features = false, features = ["crossterm", "image-defaults"] }
-unicode-width = "0.2"
-unicode-segmentation = "1.12"
 
 # CLI Framework & Serialization
 clap = { version = "4.5", features = ["derive", "cargo", "env"] }

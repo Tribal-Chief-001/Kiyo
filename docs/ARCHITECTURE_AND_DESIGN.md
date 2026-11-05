@@ -7,22 +7,22 @@
 Traditional document viewers on Linux either:
 1. Suffer from single-threaded UI rendering lockups during heavy Poppler/MuPDF rasterization.
 2. Rely on naive color inversion that destroys figures, charts, and photographs in dark mode.
-3. Lack unified headless CLI and terminal graphics (TUI) interfaces.
+3. Lack a unified headless CLI and desktop file manager integration suite.
 4. Have zero integrated, offline, zero-dependency neural OCR engines for scanned documents.
 5. Force users into separate, bloated tools for e-books (400MB+ WebKit-based readers) and comic archives.
 
-`Kiyo` eliminates these compromises through a unified 7-crate workspace combining the polymorphic `UniversalDocument` model, hardware-accelerated 2D vector compute rasterization (`vello 0.11` on `wgpu 30.0`), zero-WebKit reflowable layout (`taffy 0.15` and `typst-layout`), SIMD sequential art decoding (`zune-image 0.5`, `unrar-rs 0.15`), and native Linux desktop citizenship.
+`Kiyo` eliminates these compromises through a streamlined 6-crate workspace combining the polymorphic `UniversalDocument` model, hardware-accelerated 2D vector compute rasterization (`vello 0.11` on `wgpu 30.0`), zero-WebKit reflowable layout (`taffy 0.15` and `typst-layout`), SIMD sequential art decoding (`zune-image 0.5`, `unrar-rs 0.15`), and native Linux desktop citizenship.
 
 ```
                                   +-------------------------------------------------------+
                                   |                     User Surfaces                     |
                                   +-------------------------------------------------------+
-                                  |    kiyo-gui (wgpu)   |  kiyo-tui (ratatui) | kiyo-cli |
-                                  +----------------------+---------------------+----------+
-                                  | [Academic Mode] [E-Reader Mode] [Comic/Manga] [Studio]|
+                                  |      kiyo-gui (wgpu)      |    kiyo-cli (Headless)    |
+                                  +---------------------------+---------------------------+
+                                  | [Academic] [E-Reader] [Comic/Manga] | [Batch & Nemo]  |
                                   +-------------------------------------------------------+
-                                             |                      |               |
-                                             v                      v               v
+                                                |                               |
+                                                v                               v
 +-----------------------------------------------------------------------------------------+
 |                                    kiyo-render                                          |
 |  - RenderBackend & UniversalDocument     - Viewport Manager        - Speculative TileCache|
@@ -52,9 +52,9 @@ Traditional document viewers on Linux either:
 
 ---
 
-## 2. Workspace Crate Topology (The 7 Crates)
+## 2. Workspace Crate Topology (The 6 Crates)
 
-The Kiyo codebase is segregated into seven specialized crates within a unified Cargo workspace. Boundaries between crates enforce strict separation of concerns, rapid compilation times, and headless reusability.
+The Kiyo codebase is segregated into six specialized crates within a unified Cargo workspace. Boundaries between crates enforce strict separation of concerns, rapid compilation times, and headless reusability.
 
 ```
 Kiyo/
@@ -66,8 +66,7 @@ Kiyo/
     ├── kiyo-gpu/               # wgpu presentation pipeline, WGSL shaders, and softbuffer fallback
     ├── kiyo-ocr/               # Embedded neural OCR inference engine (ocrs + rten)
     ├── kiyo-gui/               # High-framerate desktop graphical viewer (winit + wgpu)
-    ├── kiyo-tui/               # Terminal graphical viewer (ratatui + Kitty/Sixel/iTerm2)
-    └── kiyo-cli/               # Headless CLI toolkit (merge, split, diff, ocr, extract, watch)
+    └── kiyo-cli/               # Headless CLI toolkit (merge, split, diff, ocr, extract, watch, thumbnail)
 ```
 
 ### 2.1. `kiyo-core`
@@ -126,19 +125,8 @@ Kiyo/
   - System D-Bus theme detection (`org.freedesktop.appearance.color-scheme`).
   - Atomic live reload integration: listening to file modification events via `notify` and hot-swapping document buffers without resetting scroll or zoom state.
 
-### 2.6. `kiyo-tui`
-- **Purpose**: Full-featured terminal PDF viewer operating directly inside modern terminal emulators.
-- **Key Dependencies**: `ratatui`, `crossterm`, `ratatui-image`, `kiyo-core`, `kiyo-render`.
-- **Key Responsibilities**:
-  - Multi-protocol graphics rendering:
-    - **Kitty Graphics Protocol**: High-bandwidth inline raster display.
-    - **Sixel Graphics**: Universal legacy terminal graphics (Foot, WezTerm, XTerm).
-    - **iTerm2 Protocol**: Inline image escape codes.
-    - **ANSI Half-Block (`▀`/`▄`) + 24-bit Truecolor**: Graceful fallback on minimal terminals.
-  - Modal Vim navigation model (`j`/`k`, `d`/`u`, `gg`/`G`, mark jumps, `/` instant regex search).
-
-### 2.7. `kiyo-cli`
-- **Purpose**: High-throughput scriptable CLI binary for automated document workflows.
+### 2.6. `kiyo-cli`
+- **Purpose**: High-throughput scriptable CLI binary and desktop launcher for automated document workflows and system integration.
 - **Key Dependencies**: `clap`, `serde`, `serde_json`, `kiyo-core`, `kiyo-ocr`, `rayon`.
 - **Key Responsibilities**:
   - Headless document manipulation subcommands:
@@ -148,6 +136,14 @@ Kiyo/
     - `kiyo ocr`: Batch searchable PDF generation.
     - `kiyo extract`: High-fidelity Markdown, plain text, and embedded asset extraction.
     - `kiyo watch`: Compiler daemon mode for real-time Typst/LaTeX feedback loops.
+    - `kiyo thumbnail`: Sub-5ms page rasterization for Linux Mint Nemo, Nautilus, and Dolphin thumbnailers.
+  - GUI desktop viewer launcher: Direct invocation (`kiyo <file>` or `kiyo gui <file>`).
+
+### 2.7. Architectural Rationale: Retiring TUI to Focus on Headless CLI + Hardware-Accelerated GUI
+Earlier iterations envisioned a terminal user interface crate (`kiyo-tui`). During real-world architectural evaluation, the TUI surface was permanently retired in favor of the headless `kiyo-cli` and GPU-accelerated `kiyo-gui` for three critical reasons:
+1. **Elimination of Redundant Development**: Implementing high-fidelity PDF inspection (pinch/scroll zoom, smooth coordinate mapping, continuous multi-page layouts) in both Ratatui and wgpu imposed massive duplicate engineering overhead.
+2. **Terminal Graphics Fragmentation**: Modern terminal emulators suffer from fragmented, fragile graphic protocols (Sixel, Kitty graphics, iTerm2, and ANSI half-blocks). Variations in multiplexer support (tmux, zellij) and font cell metrics often corrupted rendering fidelity, zoom precision, and text selection accuracy.
+3. **Purity of Focus**: By retiring the terminal viewer, Kiyo channels 100% of its interactive rendering efforts into a premier 120Hz/144Hz native GPU desktop experience (`kiyo-gui`), while `kiyo-cli` delivers unmatched headless performance for batch scripts, background pipelines, and Linux Mint Nemo file manager integration (`kiyo thumbnail`, `kiyo merge`, `kiyo ocr`, `kiyo diff`).
 
 ---
 
@@ -257,7 +253,7 @@ Kiyo's runtime is governed by an asynchronous Actor pattern using bounded channe
 ```
                       +-----------------------------+
                       |      OS Event Loop          |
-                      |   (winit / crossterm)       |
+                      |          (winit)            |
                       +-----------------------------+
                                      |
                                      | InputEvent (Scroll, Zoom, Key, Resize)
@@ -481,4 +477,4 @@ impl GpuPresentationPipeline {
 | **GPU Texture VRAM** | `wgpu::Texture` 2D array / atlases | 512 MiB | LRU; unreferenced tiles destroyed on frame completion |
 | **Shared Memory IPC** | `memfd_create` ring buffers | 64 MiB ($64 \times 1\text{ MiB}$ slots) | Reused circularly on task completion |
 | **OCR Weights** | Static mmap of ONNX model files | ~45 MiB | Kept loaded in read-only mapped pages |
-| **Total Base RSS** | Dynamic memory footprint | **< 30 MiB** (idle) | Sub-15 MiB in minimal CLI/TUI modes |
+| **Total Base RSS** | Dynamic memory footprint | **< 30 MiB** (idle) | Sub-15 MiB in headless CLI invocations |

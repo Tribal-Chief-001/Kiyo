@@ -13,15 +13,6 @@ fn main() -> anyhow::Result<()> {
                 );
             }
         }
-        Some(Commands::Tui(tui)) => {
-            if !cli.quiet {
-                println!(
-                    "Launching Kiyo TUI ({:?} protocol) for: {:?}",
-                    tui.graphics,
-                    tui.file.as_deref().unwrap_or(std::path::Path::new("blank"))
-                );
-            }
-        }
         Some(Commands::Merge(merge)) => {
             if !cli.quiet {
                 println!(

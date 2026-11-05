@@ -10,7 +10,7 @@ To definitively outclass all existing PDF readers and toolchains from Day 0, `Ki
 +----------------------------------------------------------------------------------------------------+
 |  1. Zero-Stutter 120Hz Loop   | Decouple UI thread from rasterization; asynchronous tile pipeline. |
 |  2. Zero-Copy Memory Mapping  | Sub-millisecond open via memmap2; lazy demand-paged page loading.  |
-|  3. Display Agnosticism       | First-class parity across GUI (wgpu), TUI (Kitty/Sixel), and CLI.  |
+|  3. Dual-Engine Synergy       | First-class parity between GPU Desktop (wgpu) & Headless CLI.      |
 |  4. Smart Dark Mode           | Perceptual Oklab inversion that never ruins photos, charts, or art.|
 |  5. Academic Portals          | Floating dual-viewports for non-disruptive citation inspection.    |
 |  6. Bidirectional SyncTeX     | Sub-millisecond roundtrip between PDF point and Neovim/VS Code.    |
@@ -40,13 +40,13 @@ To definitively outclass all existing PDF readers and toolchains from Day 0, `Ki
   - Documents are memory-mapped into virtual memory via `memmap2::Mmap`.
   - The Linux kernel page cache manages physical RAM residency. A 2,000-page document opens in **< 1 millisecond**, consuming under **20 MiB RSS** until specific pages are scrolled into view.
 
-### 2.3. Principle 3: Universal Display Agnosticism (GUI, TUI, CLI)
-- **The Defect in Existing Viewers**: Users are forced to maintain different mental models and disparate command flags: GUI viewers (Evince/Sioyek) cannot run over SSH or in tmux; terminal viewers (none) don't exist with full fidelity; CLI tools (`pdfcpu`/`pdftk`) lack visual feedback.
+### 2.3. Principle 3: Dual-Engine Synergy: Native GPU Desktop (GUI) & Headless Shell Automation (CLI)
+- **The Defect in Existing Viewers**: Users are forced to maintain disparate tools and mental models: graphical viewers (Evince/Sioyek) cannot be scripted or integrated into headless terminal pipelines, while CLI manipulation utilities (`pdfcpu`/`pdftk`) lack visual feedback and desktop launching capabilities.
 - **Kiyo's Solution**:
-  - A unified binary `kiyo` containing the full suite:
-    - `kiyo gui <doc.pdf>`: Full hardware-accelerated desktop viewer.
-    - `kiyo tui <doc.pdf>`: Inline high-resolution terminal viewer using Kitty, Sixel, or iTerm2 protocols.
-    - `kiyo merge`, `split`, `diff`, `ocr`: Scriptable headless CLI pipelines.
+  - A unified binary `kiyo` providing dual-engine synergy:
+    - `kiyo gui <doc.pdf>` (or simply `kiyo <doc.pdf>`): Instant launch of the high-framerate hardware-accelerated desktop viewer.
+    - `kiyo merge`, `split`, `diff`, `ocr`, `extract`, `watch`, `thumbnail`: Scriptable, sub-millisecond headless CLI pipelines and Linux Mint Nemo context actions.
+  - **Architectural Note on TUI Retirement**: Earlier prototypes explored a terminal UI (`kiyo-tui`). However, brittle terminal graphics protocols (Sixel, Kitty graphics, iTerm2, ANSI half-blocks) and multiplexer inconsistencies across terminal emulators compromised rendering precision and created duplicate maintenance overhead. Retiring the TUI enables 100% focused polish on the 120Hz/144Hz native GPU desktop experience while ensuring the headless CLI remains an ultra-fast, robust automation powerhouse.
 
 ### 2.4. Principle 4: Luminance-Preserving Smart Dark Mode
 - **The Defect in Existing Viewers**: Naive negative color inversion ($C' = 1.0 - C$) turns high-resolution microscope scans, circuit diagrams, portraits, and multi-color charts into bizarre inverted negatives.
