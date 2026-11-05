@@ -104,9 +104,24 @@ Modern document viewing and manipulation on Linux remains trapped in decades-old
 
 Kiyo is engineered in 100% pure Rust with **zero external C runtime dependencies**.
 
-### Option 1: Quick Install via Cargo (Recommended)
+### ⚡ 1-Line Universal Install (Recommended for All Users)
 
-Make sure you have Rust 1.85+ installed via [rustup.rs](https://rustup.rs):
+Run this single command in your terminal to automatically download the optimized release binary, install the desktop launcher, configure Linux Mint Cinnamon Nemo actions, and set up icons in under 5 seconds:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tribal-Chief-001/Kiyo/main/scripts/install.sh | bash
+```
+
+> **Clean Uninstall:** To completely remove Kiyo and all desktop integration files at any time, run:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/Tribal-Chief-001/Kiyo/main/scripts/install.sh | bash -s -- --uninstall
+> ```
+
+---
+
+### Option 2: Build from Source via Cargo
+
+For developers with Rust 1.85+ installed via [rustup.rs](https://rustup.rs):
 
 ```bash
 # Clone the repository
@@ -277,6 +292,85 @@ cargo fmt --check
 # Build release profiles with Fat LTO and binary stripping
 cargo build --release
 ```
+
+---
+
+## ❓ Troubleshooting & Frequently Asked Questions (FAQs)
+
+<details>
+<summary><b>1. <code>command not found: kiyo</code> after running the 1-line installer?</b></summary>
+<p>
+
+Your terminal shell hasn't refreshed its `$PATH` environment variable yet. Reload your shell configuration:
+```bash
+# For Bash (default on Linux Mint / Ubuntu)
+source ~/.bashrc
+
+# For Zsh
+source ~/.zshrc
+```
+Or simply close and reopen your terminal window.
+</p>
+</details>
+
+<details>
+<summary><b>2. How do I make Kiyo the default PDF / E-Book viewer on Linux Mint?</b></summary>
+<p>
+
+1. In Nemo (File Manager), right-click any `.pdf`, `.epub`, or `.cbz` file.
+2. Select **Open With** → **Other Application...**.
+3. Choose **Kiyo** from the list of installed applications.
+4. Check the box **"Always use this application for this type of file"** and click **Set as default**.
+</p>
+</details>
+
+<details>
+<summary><b>3. Does Kiyo require a dedicated graphics card (NVIDIA / AMD)?</b></summary>
+<p>
+
+No. Kiyo features a **3-tier graphics fallback hierarchy**:
+1. **Tier 1 (Modern GPUs):** Hardware Vulkan 1.2+ on Intel Iris/Arc, AMD Radeon, and NVIDIA for 120Hz/144Hz tear-free presentation.
+2. **Tier 2 (Legacy GPUs):** OpenGL ES fallback (`wgpu` GLES backend) for older Intel Gen7/Gen8 processors.
+3. **Tier 3 (Headless / Broken Drivers):** Pure CPU software blitting via `tiny-skia` + `softbuffer` for remote SSH sessions, VMs, or systems without GPU drivers.
+</p>
+</details>
+
+<details>
+<summary><b>4. How does the Linux Mint Nemo right-click menu work?</b></summary>
+<p>
+
+The 1-line installer places `kiyo.nemo_action` into `~/.local/share/nemo/actions/`. When you select one or more PDF files in Nemo:
+- **Select 1 PDF:** Right-click gives you instant actions to *"Make Searchable (Neural OCR)"*, *"Prepress Saddle-Stitch Booklet"*, or *"Crop Margins"*.
+- **Select Multiple PDFs:** Right-click gives you an instant *"Merge PDFs with Kiyo"* action that compiles them in under 200ms without opening a window.
+</p>
+</details>
+
+<details>
+<summary><b>5. How do I control Kiyo from Hyprland or Sway keybindings?</b></summary>
+<p>
+
+Kiyo automatically starts a high-speed Unix Domain Socket listener at `/run/user/$UID/kiyo/active.sock`. Use the companion binary `kiyo-remote`:
+```bash
+kiyo-remote next-page    # Advance page
+kiyo-remote prev-page    # Previous page
+kiyo-remote toggle-dark  # Toggle Oklab smart dark mode
+kiyo-remote goto 42      # Jump directly to page 42
+kiyo-remote get-status   # Returns JSON status of active document
+```
+</p>
+</details>
+
+<details>
+<summary><b>6. How do I completely uninstall Kiyo?</b></summary>
+<p>
+
+Run the 1-line installer with the `--uninstall` flag:
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tribal-Chief-001/Kiyo/main/scripts/install.sh | bash -s -- --uninstall
+```
+This safely purges binaries from `~/.local/bin/`, desktop entries from `~/.local/share/applications/`, icons from `~/.local/share/icons/`, and Nemo context actions.
+</p>
+</details>
 
 ---
 
