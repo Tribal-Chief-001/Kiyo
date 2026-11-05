@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Squircle Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181B26"/>
+      <stop offset="50%" stop-color="#0F121B"/>
+      <stop offset="100%" stop-color="#080A0F"/>
+    </linearGradient>
+
+    <!-- Document Sheet Gradient -->
+    <linearGradient id="sheetGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="85%" stop-color="#F1F3F9"/>
+      <stop offset="100%" stop-color="#E2E6F0"/>
+    </linearGradient>
+
+    <!-- GPU Cyan-to-Indigo Neon Gradient -->
+    <linearGradient id="gpuNeon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F0FF"/>
+      <stop offset="50%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#A855F7"/>
+    </linearGradient>
+
+    <!-- Amber Prepress Accent -->
+    <linearGradient id="amberAccent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF5500"/>
+      <stop offset="100%" stop-color="#FFAA00"/>
+    </linearGradient>
+
+    <!-- Fold Flap Gradient -->
+    <linearGradient id="foldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#CBD5E1"/>
+      <stop offset="100%" stop-color="#94A3B8"/>
+    </linearGradient>
+
+    <!-- Subtle Drop Shadow Filter -->
+    <filter id="shadowFilter" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+
+    <filter id="glowFilter" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Squircle Base Frame -->
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#bgGrad)" stroke="#2A3042" stroke-width="4"/>
+
+  <!-- Subtle Subtle Inner Rim -->
+  <rect x="28" y="28" width="456" height="456" rx="100" fill="none" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="2"/>
+
+  <!-- Back Sheet (Secondary Stack Page for Multi-Format depth) -->
+  <path d="M 172 108 L 336 108 L 396 168 L 396 404 C 396 412 390 418 382 418 L 172 418 C 164 418 158 412 158 404 L 158 122 C 158 114 164 108 172 108 Z" 
+        fill="#262C3D" opacity="0.6"/>
+
+  <!-- Front Document Sheet with Folded Corner -->
+  <g filter="url(#shadowFilter)">
+    <!-- Document Body Shape -->
+    <path d="M 136 124 C 136 113 145 104 156 104 L 308 104 L 376 172 L 376 392 C 376 403 367 412 356 412 L 156 412 C 145 412 136 403 136 392 Z" 
+          fill="url(#sheetGrad)"/>
+
+    <!-- Folded Corner Geometry -->
+    <path d="M 308 104 L 308 156 C 308 165 315 172 324 172 L 376 172 Z" 
+          fill="url(#foldGrad)"/>
+    <path d="M 308 172 L 376 172 L 308 104 Z" 
+          fill="#000000" opacity="0.12"/>
+  </g>
+
+  <!-- Document Line Art (Typography Runs) -->
+  <rect x="176" y="160" width="108" height="12" rx="6" fill="#94A3B8" opacity="0.65"/>
+  <rect x="176" y="186" width="168" height="10" rx="5" fill="#CBD5E1" opacity="0.75"/>
+  <rect x="176" y="206" width="144" height="10" rx="5" fill="#CBD5E1" opacity="0.75"/>
+  <rect x="176" y="226" width="160" height="10" rx="5" fill="#CBD5E1" opacity="0.75"/>
+
+  <!-- Prepress / Inspection Crosshair Marks (Subtle Technical Ticks) -->
+  <line x1="160" y1="134" x2="160" y2="146" stroke="#64748B" stroke-width="2"/>
+  <line x1="154" y1="140" x2="166" y2="140" stroke="#64748B" stroke-width="2"/>
+
+  <!-- Glowing Dynamic Vector 'K' Blade (Signifying GPU Acceleration & Vello Linebender) -->
+  <g filter="url(#glowFilter)">
+    <!-- Vertical Spine of the Dynamic K -->
+    <path d="M 186 266 C 186 260 191 256 197 256 L 209 256 C 215 256 220 260 220 266 L 220 368 C 220 374 215 378 209 378 L 197 378 C 191 378 186 374 186 368 Z" 
+          fill="url(#gpuNeon)"/>
+
+    <!-- Upper Diagonal Blade -->
+    <path d="M 218 316 L 278 260 C 283 255 291 256 295 261 L 307 274 C 311 279 310 286 305 291 L 249 338 Z" 
+          fill="url(#gpuNeon)"/>
+
+    <!-- Lower Diagonal Blade extending forward with Amber Tip -->
+    <path d="M 235 324 L 297 376 C 302 380 310 380 314 375 L 327 361 C 331 356 330 348 325 344 L 264 294 Z" 
+          fill="url(#amberAccent)"/>
+  </g>
+
+  <!-- High-Tech Coordinate / Viewport Dot -->
+  <circle cx="334" cy="368" r="5" fill="#00F0FF" filter="url(#glowFilter)"/>
+</svg>

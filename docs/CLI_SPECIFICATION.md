@@ -70,6 +70,15 @@ pub enum Commands {
 
     /// Generate a raster thumbnail image for file managers (Nemo, Nautilus, Dolphin)
     Thumbnail(ThumbnailArgs),
+
+    /// Prepress N-up imposition, booklet saddle-stitching, mechanical creep, and printer marks
+    Impose(ImposeArgs),
+
+    /// Intelligent whitespace auto-cropping with running header/footer suppression
+    CropMargins(CropMarginsArgs),
+
+    /// Control active Kiyo GUI instance via UNIX domain socket IPC (or standalone kiyo-remote)
+    Remote(RemoteArgs),
 }
 
 #[derive(Args, Debug, PartialEq)]
@@ -178,6 +187,75 @@ pub struct ThumbnailArgs {
 
     #[arg(short, long, default_value = "0", help = "Page index to render (0-based)")]
     pub page: u32,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct ImposeArgs {
+    #[arg(required = true, help = "Input PDF file to impose")]
+    pub input: PathBuf,
+
+    #[arg(short, long, default_value = "imposed.pdf", help = "Output destination file path")]
+    pub output: PathBuf,
+
+    #[arg(long, default_value = "1", help = "N-up sheet page layout (e.g. '2', '4', '8')")]
+    pub nup: u8,
+
+    #[arg(long, help = "Impose as folded saddle-stitch booklet")]
+    pub booklet: bool,
+
+    #[arg(long, default_value = "0.2835", help = "Mechanical paper thickness/creep delta in pt (0.1mm = 0.2835pt)")]
+    pub creep: f32,
+
+    #[arg(long, help = "Embed prepress printer marks (trim ticks, bleed ticks, fold marks, CMYK wedges)")]
+    pub marks: bool,
+
+    #[arg(long, default_value = "14.17", help = "Gutter spacing between imposed pages in points")]
+    pub gutter: f32,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct CropMarginsArgs {
+    #[arg(required = true, help = "Input document with wide margins")]
+    pub input: PathBuf,
+
+    #[arg(short, long, default_value = "cropped.pdf", help = "Output destination file path")]
+    pub output: PathBuf,
+
+    #[arg(long, default_value = "true", help = "Detect and suppress running headers and footers from margin limits")]
+    pub preserve_headers: bool,
+
+    #[arg(long, default_value = "12.0", help = "Safety breathing padding around content text in points")]
+    pub padding: f32,
+
+    #[arg(long, default_value = "0.98", help = "Luminance threshold to consider a pixel white whitespace [0.0 - 1.0]")]
+    pub threshold: f32,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct RemoteArgs {
+    #[command(subcommand)]
+    pub action: RemoteAction,
+
+    #[arg(long, help = "Specific Kiyo PID to target (defaults to active focused instance)")]
+    pub pid: Option<u32>,
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+pub enum RemoteAction {
+    /// Advance 1 page (respects comic RTL progression)
+    NextPage,
+    /// Move backward 1 page
+    PrevPage,
+    /// Jump directly to target page number
+    Goto { page: usize },
+    /// Modify zoom factor ('in', 'out', 'fit-width', 'fit-page', or float like '1.5')
+    Zoom { level: String },
+    /// Toggle Smart Oklab Dark Mode
+    ToggleDark,
+    /// Teleport viewport/cursor to Hop/Avy jump tag
+    JumpTag { tag: String },
+    /// Retrieve JSON document and viewport status
+    GetStatus,
 }
 ```
 
@@ -304,3 +382,62 @@ kiyo extract technical_paper.pdf --markdown --images -o ./extracted_paper
 # Monitor compiled document and trigger browser/notification hook on update
 kiyo watch paper.pdf --on-reload "notify-send 'Kiyo' 'Document updated!'"
 ```
+
+### 3.7. Prepress Imposition & Booklet Saddle-Stitch Workflows
+```bash
+# Impose standard document as 2-up sheet layout
+kiyo impose input.pdf -o imposed_2up.pdf --nup 2 --gutter 18.0
+
+# Generate a saddle-stitch folded booklet with mechanical paper creep compensation
+# Paper thickness 0.10mm (~0.2835 pt) and full prepress printer marks (trim, bleed, fold, CMYK bars)
+kiyo impose catalog.pdf -o catalog_booklet.pdf --booklet --creep 0.2835 --marks
+
+# 4-up sheet imposition with custom gutter margins
+kiyo impose slides.pdf -o slides_4up.pdf --nup 4 --gutter 24.0
+```
+
+### 3.8. Intelligent Whitespace Auto-Cropping Workflows
+```bash
+# Auto-crop wide scanned margins, automatically detecting and suppressing running headers/footers
+kiyo crop-margins textbook_scan.pdf -o textbook_cropped.pdf --preserve-headers --padding 12.0
+
+# Aggressive full margin purge (removes all whitespace past 95% luminance)
+kiyo crop-margins slides.pdf -o slides_tight.pdf --threshold 0.95 --padding 0.0
+```
+
+### 3.9. Tiling Window Manager & Shell Remote Control (`kiyo-remote`)
+`kiyo-remote` (or `kiyo remote <action>`) provides instant IPC control over running GUI instances:
+```bash
+# Navigate pages (respects comic RTL reading mode in Comic Mode)
+kiyo-remote next-page
+kiyo-remote prev-page
+
+# Teleport to page 84
+kiyo-remote goto 84
+
+# Zoom manipulation (perceptually uniform logarithmic zoom)
+kiyo-remote zoom in
+kiyo-remote zoom out
+kiyo-remote zoom fit-width
+kiyo-remote zoom 1.5
+
+# Toggle Smart Oklab Dark Mode
+kiyo-remote toggle-dark
+
+# Hop/Avy spatial jump navigation
+kiyo-remote jump-tag ab
+
+# Query JSON document and viewport status
+kiyo-remote get-status
+# Output:
+# {
+#   "file": "/home/user/paper.pdf",
+#   "page": 42,
+#   "total_pages": 120,
+#   "zoom": 1.25,
+#   "dark_mode": true,
+#   "viewport_frustum": [0.0, 720.0, 595.0, 842.0],
+#   "selected_text": "quantum entanglement"
+# }
+```
+

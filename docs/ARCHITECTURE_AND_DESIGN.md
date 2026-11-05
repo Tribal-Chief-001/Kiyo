@@ -74,7 +74,7 @@ Kiyo/
 - **Key Dependencies**: `memmap2`, `lopdf`, `pdf-writer`, `krilla`, `rayon`, `parking_lot`.
 - **Key Responsibilities**:
   - Memory-mapping PDF files via `memmap2::Mmap` for sub-millisecond document loading regardless of file size (100MB+ documents map in < 1ms).
-  - Parsing corrupted xref tables with repair heuristics.
+  - 4-Stage Corrupt Xref Salvage Pipeline: Backward trailer scan, linear token scan, brute-force `\d+ \d+ obj` byte scanning, and Compressed Object Stream (`/ObjStm` ISO 32000-1 §7.5.7) decompression extracting nested dictionary offsets via `/First` and `/N`.
   - Exposing an immutable document DOM with copy-on-write (CoW) page tree manipulation.
   - Bidirectional SyncTeX line/column $\leftrightarrow$ PDF coordinate translation.
   - XY-cut recursive spatial decomposition of glyph runs for reading-order extraction and table reconstruction.
@@ -92,7 +92,7 @@ Kiyo/
 
 ### 2.3. `kiyo-gpu`
 - **Purpose**: Hardware-accelerated presentation pipeline, custom WGSL compute/fragment shaders, texture streaming, and software raster fallback.
-- **Key Dependencies**: `wgpu`, `winit`, `softbuffer`, `tiny-skia`, `bytemuck`.
+- **Key Dependencies**: `wgpu`, `winit`, `softbuffer`, `tiny-skia`, `bytemuck`, `lcms2`.
 - **Key Responsibilities**:
   - 3-tier presentation pipeline:
     1. **Primary**: Vulkan 1.2+ backend on Linux (Wayland / X11).
@@ -101,6 +101,7 @@ Kiyo/
   - Custom WGSL Fragment Shaders:
     - **Luminance-Preserving Smart Dark Mode**: Real-time Oklab color-space inversion dampening pure whites to charcoal, preserving chrominance of images and vector syntax colors.
     - **Visual XOR Difference Shader**: Real-time structural and typographical delta visualization between two PDF revisions (Revision A in cyan, Revision B in magenta, overlaps in neutral gray).
+    - **LittleCMS 2.16 3D LUT Texture Shader**: Real-time trilinear sampling of $33 \times 33 \times 33$ prepress CMYK/RGB profiles with CIEDE2000 out-of-gamut zebra warning striping.
   - Ring buffer texture streaming: Zero-copy upload of worker-rendered tiles to GPU memory via pinned staging buffers.
 
 ### 2.4. `kiyo-ocr`
@@ -119,8 +120,8 @@ Kiyo/
 - **Key Dependencies**: `kiyo-core`, `kiyo-render`, `kiyo-gpu`, `winit`, `ashpd`, `x11rb`, `zbus`, `notify`.
 - **Key Responsibilities**:
   - High-framerate event loop delivering stutter-free 120Hz/144Hz scrolling.
-  - Non-intrusive floating secondary viewports ("Portals") for simultaneous inspection of mathematical equations, footnotes, and bibliography references.
-  - Wayland `wp_fractional_scale_v1` integration for pixel-perfect HiDPI text.
+  - Wayland Subsurface Isolation Hierarchy: Academic portals mapped as `wl_subsurface` (with `set_desync`) and previews mapped as `xdg_popup` to prevent tiling window managers (Hyprland, Sway) from unwanted window splitting.
+  - Wayland `wp_fractional_scale_v1` integration for pixel-perfect HiDPI text with 3pt ergonomic forgiving hit radius.
   - Instant X11 `PRIMARY` selection population on text highlight.
   - System D-Bus theme detection (`org.freedesktop.appearance.color-scheme`).
   - Atomic live reload integration: listening to file modification events via `notify` and hot-swapping document buffers without resetting scroll or zoom state.

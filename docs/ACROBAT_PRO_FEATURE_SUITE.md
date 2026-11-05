@@ -12,6 +12,9 @@ For over two decades, Adobe Acrobat Pro (culminating in the definitive, unbloate
 5. **Multi-Stage Destructive Redaction**: True physical scrubbing of vector paths, raster pixels, glyph runs, and hidden metadata.
 6. **AcroForms with Sandboxed ECMAScript**: Secure calculation scripts executed via a zero-syscall `boa_engine` runtime.
 7. **PAdES Digital Signatures**: ETSI EN 319 142 compliant cryptographic verification and detached CMS signatures.
+8. **ICC Prepress Color Proofing & 3D LUT**: LittleCMS 2.16 with GPU-accelerated 3D LUT texture pipeline and zebra gamut warnings.
+9. **Mechanical Booklet & N-Up Imposition**: Saddle-stitch folding mathematics with paper creep compensation and full printer marks.
+10. **Hardened Cryptography & Permissions**: ISO 32000-2 AES-256 Rev 5/6 with SASLprep and strict `/P` bitmask enforcement.
 
 ```
 +---------------------------------------------------------------------------------------------------+
@@ -27,10 +30,15 @@ For over two decades, Adobe Acrobat Pro (culminating in the definitive, unbloate
 | - Tagged PDF/UA /Artifact Embed  | - Sutherland-Hodgman Polygon Clip| - boa_engine Zero-Syscall JS |
 | - Anti-Collision Page Numbers    | - XObject Raster Scrubbing      | - Event-Driven Field Engine  |
 +----------------------------------+---------------------------------+------------------------------+
-| [PAdES Cryptographic Signatures] | [Structural & Visual Diff]      | [PDF/A Preflight Validator]  |
-| - ETSI EN 319 142 Profile Specs  | - Real-Time WGSL Diff Shader    | - PDF/A-1b, PDF/A-2u, PDF/A-3|
-| - /ByteRange Disjoint Hash Proof | - Bounding Box Spatial Delta    | - Embedded Color ICC Check   |
-| - RFC 3161 TSA Timestamp Tokens  | - Semantic Typography Inspector | - Unembedded Font Detection  |
+| [PAdES Cryptographic Signatures] | [Structural & Visual Diff]      | [Prepress Color & Imposition]|
+| - ETSI EN 319 142 Profile Specs  | - Real-Time WGSL Diff Shader    | - LittleCMS 2.16 33^3 3D LUT |
+| - /ByteRange Disjoint Hash Proof | - Bounding Box Spatial Delta    | - Saddle-Stitch Creep Delta  |
+| - RFC 3161 TSA Timestamp Tokens  | - Semantic Typography Inspector | - Out-of-Gamut Zebra Shaders |
++----------------------------------+---------------------------------+------------------------------+
+| [Hardened Cryptography & /P]     | [PDF/A Preflight Validator]     | [Automated Document Salvage] |
+| - AES-256 Rev 5/6 (SASLprep)     | - PDF/A-1b, PDF/A-2u, PDF/A-3   | - 4-Stage Corrupt Xref Scan  |
+| - Empty User Pass Auto-Probe     | - Embedded Color ICC Check      | - /ObjStm Decompression      |
+| - Strict Table 22 /P Bitmask     | - Unembedded Font Detection     | - Hybrid Stream Offset Parse |
 +---------------------------------------------------------------------------------------------------+
 ```
 
@@ -291,3 +299,160 @@ The Light-Table Canvas in `kiyo-gui` provides seamless structural document reorg
 - **Arbitrary Angle Rotation**: Mutates the `/Rotate` integer attribute (0°, 90°, 180°, 270°) without expensive raster re-encoding.
 - **Burst & Split Operations**: Page extraction compiling individual pages into independent, self-contained PDF binaries with pruned resource dictionaries.
 - **Inter-Document Merging**: Seamless drag-and-drop of pages between two open document windows.
+
+---
+
+## 9. Prepress ICC Color Management & LittleCMS 2.16 3D LUT Engine
+
+In commercial offset printing (CMYK) and digital prepress, exact color fidelity is critical. A design composed in Adobe RGB, sRGB, or Display P3 must be accurately proofed against physical press profiles such as **ISO Coated v2 (ECI)**, **GRACoL 2006 Coated 1**, or **Japan Color 2001 Coated** before plate imaging.
+
+```
++---------------------------------------------------------------------------------------------------+
+|                        Kiyo LittleCMS 2.16 GPU 3D LUT Color Pipeline                              |
++---------------------------------------------------------------------------------------------------+
+| [Embedded ICC / DeviceCMYK] ---> [LittleCMS 2.16 Engine] ---> [33x33x33 3D LUT Texture in VRAM]   |
+|                                         |                                  |                      |
+|                                         v                                  v                      |
+|                              [Rendering Intent Selection]         [wgpu Trilinear Sampler]        |
+|                              - Perceptual (Intent 0)                       |                      |
+|                              - Relative Colorimetric + BPC (Intent 1)      v                      |
+|                              - Saturation (Intent 2)             [WGSL Post-Process Shader]       |
+|                              - Absolute Colorimetric (Intent 3)            |                      |
+|                                                                            +---> Out-of-Gamut     |
+|                                                                                  Zebra Overlay    |
++---------------------------------------------------------------------------------------------------+
+```
+
+### 9.1. The 4 ISO Prepress Rendering Intents
+Kiyo supports the four standardized ICC profile rendering intents defined in ISO 15076-1:
+1. **Perceptual (Intent 0)**: Compresses the entire source color gamut into the destination press gamut while preserving proportional visual distances between hues. Ideal for continuous-tone photography and complex art.
+2. **Relative Colorimetric with Black Point Compensation (BPC) (Intent 1)**: Maps in-gamut colors with mathematical precision ($\Delta E_{00} \approx 0$) while clipping out-of-gamut shades to the closest boundary. Applies ISO 18619 BPC to prevent crushed shadow details in rich blacks.
+3. **Saturation (Intent 2)**: Stretches out-of-gamut vectors to maximum device saturation, sacrificing hue accuracy for maximum punch. Tailored for corporate pie charts and vector graphics.
+4. **Absolute Colorimetric (Intent 3)**: Preserves absolute chromaticity values without adjusting for the white point of the output medium, simulating the exact yellowish or bluish cast of physical unprinted paper substrates.
+
+### 9.2. Zero-Latency GPU 3D LUT Pipeline
+Invoking CPU-based color conversion on every pixel of a $4K$ rendered page causes severe frame drops ($> 60\text{ ms}$ latency). `Kiyo` solves this via hardware-accelerated 3D Lookup Tables (CLUT):
+1. **Host-Side Generation**: On document open or profile change, `kiyo-gpu` invokes LittleCMS 2.16 (`lcms2 6.0`) to compute a $33 \times 33 \times 33$ RGB/CMYK transformation lattice ($35,937$ 32-bit float nodes).
+2. **GPU Texture Upload**: The 3D table is uploaded to VRAM as a `wgpu::TextureFormat::Rgba8Unorm` or `Rgba16Float` 3D texture (`TextureViewDimension::D3`).
+3. **Trilinear Hardware Interpolation**: In the presentation fragment shader, input pixel colors act as normalized 3D coordinates $(u, v, w) \in [0.0, 1.0]^3$. The GPU hardware texture unit performs trilinear volumetric filtering in sub-nanosecond time:
+   ```wgsl
+   @group(1) @binding(0) var lut_texture: texture_3d<f32>;
+   @group(1) @binding(1) var lut_sampler: sampler;
+
+   fn apply_icc_lut(color: vec3<f32>) -> vec3<f32> {
+       return textureSample(lut_texture, lut_sampler, color).rgb;
+   }
+   ```
+
+### 9.3. Out-of-Gamut Zebra Warning Shader
+To prevent costly print press disasters where vibrant monitor colors clip to muddy inks, `Kiyo` provides an interactive Out-of-Gamut Warning shader.
+- Evaluates the CIEDE2000 color difference:
+  $$\Delta E_{00} = \sqrt{\left(\frac{\Delta L'}{k_L S_L}\right)^2 + \left(\frac{\Delta C'}{k_C S_C}\right)^2 + \left(\frac{\Delta H'}{k_H S_H}\right)^2 + R_T \frac{\Delta C'}{k_C S_C}\frac{\Delta H'}{k_H S_H}}$$
+- If $\Delta E_{00} > 2.0$ (exceeding Just Noticeable Difference against target press gamut), the shader generates a dynamic diagonal high-contrast zebra pattern using screen-space coordinates:
+  ```wgsl
+  let screen_diag = in.position.x + in.position.y;
+  let is_stripe = fract(screen_diag / 14.0) > 0.5;
+  if (delta_e00 > 2.0 && is_stripe) {
+      final_color = vec4<f32>(1.0, 0.78, 0.05, 1.0); // Prepress cautionary amber
+  }
+  ```
+
+---
+
+## 10. N-Up Sheet Imposition, Booklet Saddle-Stitch Engine & Printer Marks
+
+Commercial print workflows require arranging multiple logical document pages onto larger parent printing sheets (imposition) so that once printed, folded, bound, and trimmed, pages appear in correct reading order.
+
+```
++---------------------------------------------------------------------------------------------------+
+|                            4-Page Saddle-Stitch Booklet Imposition Layout                         |
++---------------------------------------------------------------------------------------------------+
+|  [Sheet s, Front Face]                           |  [Sheet s, Back Face]                          |
+|  +-----------------------+---------------------+ |  +---------------------+---------------------+  |
+|  | Page M - 2s           | Page 2s + 1         | |  | Page 2s + 2         | Page M - 2s - 1     |  |
+|  | (Back Cover / Left)   | (Front Cover/ Right)| |  | (Inside Left Page)  | (Inside Right Page) |  |
+|  +-----------------------+---------------------+ |  +---------------------+---------------------+  |
+|             ^                       ^            |             ^                     ^            |
+|             |                       |            |             |                     |            |
+|             +---- Mechanical Creep -+            |             +-- Mechanical Creep -+            |
+|                   Delta_creep(k) = k * t         |                 Delta_creep(k) = k * t         |
++---------------------------------------------------------------------------------------------------+
+```
+
+### 10.1. Mechanical Booklet Saddle-Stitch Imposition
+Saddle-stitching folds nested sheets along a central spine and staples through the crease.
+1. **Padding to Multiple of 4**: If total document page count is $N$, Kiyo appends blank pages until $M = 4 \cdot \lceil N / 4 \rceil$.
+2. **Sheet Signature Calculation**: Total physical sheets $S = M / 4$.
+3. **Face Page Placement**: For each sheet $s \in [0, S - 1]$:
+   - **Front Face**: Left Page $= M - 2s$, Right Page $= 2s + 1$.
+   - **Back Face**: Left Page $= 2s + 2$, Right Page $= M - 2s - 1$.
+
+### 10.2. Corrected Mechanical Paper Creep Formula
+Because paper has physical thickness $t$ (caliper), inner folded sheets are pushed outward beyond the edge of outer sheets. When the booklet face is trimmed flat with a guillotine cutter, inner pages lose their outer margins unless compensated during imposition:
+$$\Delta_{\text{creep}}(k) = k \cdot t$$
+- $k \in [0, S - 1]$ is the zero-indexed sheet layer index, where $k = 0$ is the outermost sheet (cover) and $k = S - 1$ is the innermost centerfold sheet.
+- $t$ is the single-sheet paper thickness in PDF points ($1\text{ mm} \approx 2.83465\text{ pt}$; typical 80 gsm bond paper $t \approx 0.10\text{ mm} \approx 0.2835\text{ pt}$).
+- **Spine Displacement**: For sheet $k$, inner pages are shifted inward toward the binding fold by $\Delta_{\text{creep}}(k)$. This ensures that after guillotine face trimming, outer margins are strictly uniform across all signatures.
+
+### 10.3. N-Up Sheet Imposition Engine
+Kiyo supports arbitrary matrix layouts: $2 \times 1$ (2-up), $2 \times 2$ (4-up), $4 \times 2$ (8-up), and $4 \times 4$ (16-up).
+- **Aspect-Ratio Preserving Cell Fitting**: Calculates optimal rotation ($0^\circ$ or $90^\circ$) to maximize paper utilization.
+- **Configurable Gutters & Bleeds**: Preserves 3mm bleed overlap between adjoining cells.
+- **Order Traversal**: Horizontal LTR, Horizontal RTL, Vertical, or Boustrophedon (snake order).
+
+### 10.4. Complete Prepress Printer Marks Engine
+Kiyo embeds vector printer marks directly into the imposition stream outside the `TrimBox`:
+1. **Trim Ticks**: 0.25 pt hairline marks at the corners of the `TrimBox` indicating exact cutting positions.
+2. **Bleed Ticks**: Boundary corner ticks indicating the 3mm `BleedBox` envelope.
+3. **Fold Marks**: Centered dashed lines on parent sheet borders indicating the spine folding axis.
+4. **CMYK Density Wedges / Color Bars**: Standard 100%, 75%, 50%, and 25% tint swatches for Cyan, Magenta, Yellow, and Key (Black), plus RGB overprint blocks and neutral gray balance targets for press densitometer calibration.
+5. **Registration Targets**: Precision bulls-eye crosshairs with sub-point registration alignment circles.
+6. **Sheet Slug Information**: Stamped document filename, timestamp, sheet number ($s / S$), side indicator (Front/Back), and separation plate name.
+
+---
+
+## 11. Document Security, Cryptography & Permissions Enforcement
+
+ISO 32000-1 and ISO 32000-2 define sophisticated cryptographic standard security handlers. Kiyo implements a zero-compromise security engine.
+
+### 11.1. Empty User Password Auto-Probing
+In enterprise, banking, and government distributions, millions of PDF files are encrypted with an Owner Password (to restrict printing or text copying) while setting the User Password to the empty string `""`.
+- Naive PDF viewers display an alarming modal asking for a password, confounding users.
+- `Kiyo` automatically performs **Empty User Password Auto-Probing**:
+  1. On document parse, if `/Encrypt` dictionary is present, Kiyo tests decrypting the file encryption key using an empty password `""`.
+  2. If authentication succeeds, the document opens instantaneously in restricted-view mode without user disruption.
+  3. If auto-probing fails, Kiyo securely prompts for the user/owner decryption password.
+
+### 11.2. Strict `/P` Permissions Bitmask Enforcement (ISO 32000 Table 22)
+The `/P` integer in the `/Encrypt` dictionary is a 32-bit signed integer bitmask defining client operation privileges:
+
+```
++---------------------------------------------------------------------------------------------------+
+|                         ISO 32000-1 Table 22 /P Permissions Bitmask Table                         |
++-----+------------+-------------------------------------+------------------------------------------+
+| Bit | Hex Value  | Standard ISO Privilege Meaning      | Kiyo Strict Enforcement Action           |
++-----+------------+-------------------------------------+------------------------------------------+
+| 3   | 0x00000004 | Print document (low-res draft 150DPI)| If 0: Disable print spooling via ashpd   |
+| 4   | 0x00000008 | Modify contents of document         | If 0: Lock content stream patching & edit|
+| 5   | 0x00000010 | Copy / extract text and graphics    | If 0: Block X11 PRIMARY & clipboard copy |
+| 6   | 0x00000020 | Add / modify text annotations & forms| If 0: Disable comment & sticky note tools|
+| 9   | 0x00000100 | Fill in interactive AcroForm fields | If 0: Make form widgets read-only        |
+| 10  | 0x00000200 | Extract text/graphics (Accessibility)| If 0: Permit screen-reader TTS only if 1 |
+| 11  | 0x00000400 | Assemble document (insert/rotate/del)| If 0: Lock Light-Table reordering & split|
+| 12  | 0x00000800 | High-resolution printing permitted  | If 0: Cap print rasterizer at 150 DPI    |
++-----+------------+-------------------------------------+------------------------------------------+
+```
+*Note: Bits 1–2, 7–8, and 13–32 are reserved by ISO 32000 and must be set to 1.*
+
+### 11.3. Cryptographic Hardening: AES-256 Rev 5 & Rev 6 (SASLprep)
+Modern PDF 2.0 documents require AES-256 encryption using Security Revision 5 (Adobe Extension Level 3) or Revision 6 (ISO 32000-2):
+1. **SASLprep Password Normalization (RFC 4013)**:
+   - Passwords undergo Unicode stringprep: non-ASCII spaces are mapped to standard ASCII space (`U+0020`), commonly prohibited symbols and private-use characters are rejected, and characters are canonicalized using Unicode Normalization Form KC (NFKC).
+   - Strict bidirectional check prevents spoofing across RTL/LTR character boundaries.
+2. **64-Round Key Derivation Loop**:
+   - Computes an iterative salted hash combining password bytes, user salt, and vector data using SHA-256, SHA-384, or SHA-512 in a 64-round loop with AES-128 ECBCrypto feedback.
+   - Derives the 256-bit File Encryption Key (FEK).
+3. **AES-256-CBC Stream Cipher**:
+   - Indirect object streams and string literals are decrypted using AES-256-CBC with a cryptographically random 16-byte initialization vector (IV) prepended to the ciphertext.
+   - Validates the `/Perms` ciphertext string to guarantee that unauthorized users cannot tamper with permissions bits without rendering the document unreadable.
+

@@ -115,6 +115,24 @@ impl ViewportScaleManager {
 }
 ```
 
+### 2.3. Fractional Scaling 3pt Ergonomic Forgiving Hit Radius
+On HiDPI screens with fractional scaling factors ($1.25\times, 1.5\times, 1.75\times$), clicking small hyperlinks, footnote superscripts (e.g. $[14]$), or vector polygon handles requires extreme motor accuracy. Single-pixel targeting errors trigger frustrating missed clicks:
+- `Kiyo` implements an ergonomic **3-Point Euclidean Distance Tolerance Envelope**:
+  $$d((x_p, y_p), \text{BBox}) = \max\left(0, \text{dist}_{\text{point-to-rect}}((x_p, y_p), B)\right) \le 3.0 \cdot s_{\text{compositor}}$$
+- When a user clicks near an interactive element, Kiyo calculates the nearest distance to all candidate link bounding boxes within the expanded $3\text{ pt}$ boundary radius.
+- Resolves ties using center-point proximity, providing effortless, stress-free link activation across all fractional scaling ratios.
+
+### 2.4. Wayland `wl_subsurface` & `xdg_popup` Overlays (Preventing Window Tiling)
+In Linux tiling window managers (Hyprland, Sway, River, i3), spawning new windows naively using `xdg_toplevel` causes the window manager to automatically tile the new window—halving the reading viewport just to display a small citation tooltip or figure portal.
+
+`Kiyo` solves this by strictly enforcing the Wayland surface hierarchy:
+1. **Citation Tooltips & Selection Loupe (`xdg_popup`)**:
+   - Mapped strictly as Wayland `xdg_popup` surfaces attached directly to the primary document surface.
+   - Constrained to the screen geometry via `xdg_positioner`, guaranteed to float above the document canvas with click-outside auto-dismissal (`grab`), completely bypassing window manager tiling rules.
+2. **Persistent Academic Portals (`wl_subsurface`)**:
+   - Pinned academic figure portals are created as Wayland `wl_subsurface` objects anchored to the main document surface.
+   - Configured with `wl_subsurface.set_desync` so that high-framerate panning inside the portal runs independently without blocking or synchronizing with the parent document swapchain.
+
 ---
 
 ## 3. D-Bus Integration and Instant Theme Detection
@@ -255,3 +273,125 @@ AppDir:
     include:
       - target/release/kiyo: usr/bin/kiyo
 ```
+
+---
+
+## 7. Tiling Window Manager IPC Socket & `kiyo-remote` (Hyprland / Sway / i3)
+
+Modern Linux power users frequently operate within dynamic tiling window managers where keyboard-driven control and scriptability are paramount.
+
+```
++---------------------------------------------------------------------------------------------------+
+|                        Kiyo Tiling WM IPC Socket & kiyo-remote Architecture                       |
++---------------------------------------------------------------------------------------------------+
+|  [Hyprland / Sway / i3 Keybinds] ---> [kiyo-remote CLI]                                           |
+|                                              |                                                    |
+|                                              v                                                    |
+|                      [UNIX Domain Socket: /run/user/$UID/kiyo/active.sock]                        |
+|                                              |                                                    |
+|                                              v                                                    |
+|                      [JSON-RPC 2.0 Dispatcher inside kiyo-gui Event Loop]                         |
+|                      - next-page, prev-page, goto, zoom, toggle-dark, jump-tag                     |
+|                                              |                                                    |
+|                                              v                                                    |
+|                      [120Hz Presentation Update without Window Splitting]                         |
++---------------------------------------------------------------------------------------------------+
+```
+
+### 7.1. Socket Topology
+When `kiyo-gui` launches, it creates a dedicated UNIX domain socket:
+- Primary instance socket: `/run/user/$UID/kiyo/$PID.sock`
+- Active window symlink: `/run/user/$UID/kiyo/active.sock` (atomically updated whenever a Kiyo window gains focus).
+- Messages use JSON-RPC 2.0 payloads or newline-delimited command strings.
+
+### 7.2. `kiyo-remote` CLI Grammar
+The lightweight companion CLI `kiyo-remote` sends commands to the active instance in < 1 ms:
+```bash
+kiyo-remote next-page             # Advance 1 page (respects comic RTL order)
+kiyo-remote prev-page             # Move backward 1 page
+kiyo-remote goto 42               # Jump directly to page 42
+kiyo-remote zoom in               # Zoom in by 1.2x (logarithmic)
+kiyo-remote zoom out              # Zoom out by 1.2x
+kiyo-remote zoom fit-width        # Fit document to viewport width
+kiyo-remote zoom fit-page         # Fit complete page in view
+kiyo-remote toggle-dark           # Toggle Smart Oklab Dark Mode
+kiyo-remote jump-tag ab           # Teleport cursor to jump tag 'ab'
+kiyo-remote get-status            # Emits JSON: {"file": "doc.pdf", "page": 42, "total": 120, "zoom": 1.25}
+```
+
+### 7.3. Window Manager Configuration Recipes
+
+#### Hyprland (`~/.config/hypr/hyprland.conf`)
+```ini
+# Seamless Kiyo Document Navigation in Hyprland
+bind = SUPER, N, exec, kiyo-remote next-page
+bind = SUPER, P, exec, kiyo-remote prev-page
+bind = SUPER, D, exec, kiyo-remote toggle-dark
+bind = SUPER, equal, exec, kiyo-remote zoom in
+bind = SUPER, minus, exec, kiyo-remote zoom out
+
+# Force floating rules for citation previews and portals
+windowrulev2 = float, class:^(org.kiyo.Kiyo)$, title:^(Portal.*)$
+windowrulev2 = pin, class:^(org.kiyo.Kiyo)$, title:^(Portal.*)$
+```
+
+#### Sway / i3 (`~/.config/sway/config` or `~/.config/i3/config`)
+```ini
+# Seamless Kiyo Document Navigation in Sway / i3
+bindsym $mod+n exec kiyo-remote next-page
+bindsym $mod+p exec kiyo-remote prev-page
+bindsym $mod+d exec kiyo-remote toggle-dark
+bindsym $mod+plus exec kiyo-remote zoom in
+bindsym $mod+minus exec kiyo-remote zoom out
+
+# Sway floating rules for Kiyo secondary windows
+for_window [app_id="org.kiyo.Kiyo" title="^Portal.*"] floating enable, sticky enable
+```
+
+---
+
+## 8. Cinnamon Desklet Quick-Drop Zone & `StatusNotifierItem` System Tray
+
+### 8.1. Cinnamon Desklet Quick-Drop Zone (`kiyo-drop@kiyo.org`)
+For Linux Mint Cinnamon users, Kiyo provides a native desktop desklet:
+- A compact, stylized drop target placed directly on the desktop canvas.
+- Dragging any PDF, comic archive (CBZ/CBR), or e-book onto the desklet presents an instant circular radial menu:
+  - **Open**: Launches `kiyo gui`.
+  - **OCR**: Invokes `kiyo ocr --sandwich` in background, alerting on completion.
+  - **Extract**: Reconstructs document to Markdown tables and text.
+  - **Impose**: Opens the booklet saddle-stitch wizard.
+
+### 8.2. FreeDesktop `StatusNotifierItem` System Tray
+`Kiyo` optionally docks a lightweight tray icon implementing `org.kde.StatusNotifierItem`:
+- Displays real-time progress bars for running headless batch jobs (e.g. OCR across a 500-page bundle).
+- Quick-access menu for recently viewed documents.
+- Global shortcuts for quick screen capture to PDF or opening clipboard documents.
+
+---
+
+## 9. Systemd User Service: `kiyo-prefetch.service`
+
+To eliminate cold-start wait times entirely, Kiyo provides an opt-in systemd user service that pre-caches document metadata and generates first-page thumbnails in the background.
+
+### 9.1. Systemd Service Unit (`~/.config/systemd/user/kiyo-prefetch.service`)
+```ini
+[Unit]
+Description=Kiyo Document Speculative Prefetch & Thumbnail Daemon
+Documentation=man:kiyo(1)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kiyo watch-folder --dirs %h/Downloads %h/Documents --max-cache-mb 256
+Restart=on-failure
+RestartSec=5s
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target
+```
+
+### 9.2. Cache Invariant & Zero-Interference Guarantee
+The prefetch daemon operates at idle I/O priority (`IOSchedulingClass=idle`) and lowest CPU priority (`nice = 19`). When a new document appears in `~/Downloads`, it parses the trailer, caches font metadata, and rasterizes a $512 \times 512$ thumbnail into `~/.cache/kiyo/thumbs/`. When the user later clicks the document in Nemo or the browser, the first frame presents instantaneously in **< 3 ms**.
+

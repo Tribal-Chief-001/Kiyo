@@ -1,12 +1,12 @@
-# The 12 Core Principles for Day 0 State of the Art and Novel Quality-of-Life Innovations
+# The 14 Core Principles for Day 0 State of the Art and Novel Quality-of-Life Innovations
 
-## 1. The 12 Architectural Principles
+## 1. The 14 Architectural Principles
 
-To definitively outclass all existing PDF readers and toolchains from Day 0, `Kiyo` is engineered around twelve non-negotiable architectural principles:
+To definitively outclass all existing PDF readers and toolchains from Day 0, `Kiyo` is engineered around fourteen non-negotiable architectural principles:
 
 ```
 +----------------------------------------------------------------------------------------------------+
-|                                      The 12 Core Principles                                        |
+|                                      The 14 Core Principles                                        |
 +----------------------------------------------------------------------------------------------------+
 |  1. Zero-Stutter 120Hz Loop   | Decouple UI thread from rasterization; asynchronous tile pipeline. |
 |  2. Zero-Copy Memory Mapping  | Sub-millisecond open via memmap2; lazy demand-paged page loading.  |
@@ -20,6 +20,8 @@ To definitively outclass all existing PDF readers and toolchains from Day 0, `Ki
 | 10. XY-Cut Markdown Extractor | Reconstruct double-column papers and complex tables into Markdown. |
 | 11. Linux Native Citizenship  | Nemo actions, instant PRIMARY copy, D-Bus theme sync, HiDPI crisp. |
 | 12. Hermetic Single Binary    | Zero external shared-library crashes; runs identically everywhere. |
+| 13. Kinetic Ergonomic Physics | Viscous/drag decay, Avy jump tags, Wayland gestures, 3pt hit halo. |
+| 14. Prepress Color & Crypto   | LittleCMS 33^3 LUT, saddle creep, auto-probe pass, AES-256 SASL.   |
 +----------------------------------------------------------------------------------------------------+
 ```
 
@@ -115,3 +117,19 @@ To definitively outclass all existing PDF readers and toolchains from Day 0, `Ki
 
 ### 2.12. Principle 12: Hermetic Single-Binary Portability
 - Zero runtime dynamic C++ shared library dependency crashes. Builds cleanly with `cargo build --release` and ships as a unified standalone binary or Flatpak/AppImage running reliably across all Linux distributions.
+
+### 2.13. Principle 13: Kinetic Physics, Micro-Interactions & Ergonomics
+- **The Defect in Existing Viewers**: Legacy document viewers move viewports through coarse, discontinuous jumps that cause disorientation. Hyperlink targeting is unforgiving, mouse-free jumping across words is nonexistent, and desktop tiling window managers mangle secondary preview windows.
+- **Kiyo's Solution**:
+  - **Kinetic Physics**: Viscous friction and aerodynamic quadratic drag ($\frac{dv}{dt} = -\mu_{\text{visc}} v - c_{\text{aero}} v |v|$) combined with critically damped harmonic restitution ($\zeta = 1.0, \omega_n = 26.0\text{ rad/s}$) snap viewports smoothly to boundaries in ~154ms with zero overshoot.
+  - **Hop/Avy Spatial Navigation**: Pressing `f <char>` overlays two-character mnemonics over matching text, enabling instantaneous keyboard jumping across visible pages without mouse interaction.
+  - **Wayland Continuous Gestures & 3pt Hit Halo**: Continuous pinch-to-zoom (`zwp_pointer_gestures_v1`) paired with an ergonomic 3-point Euclidean margin expansion ($d((x,y), B) \le 3\text{ pt}$) eliminates targeting frustration on high-DPI displays.
+  - **Subsurface Overlay Isolation**: Academic portals and loupe magnifiers are mapped as Wayland `wl_subsurface` and `xdg_popup` surfaces, ensuring they never trigger unwanted tiling in Sway or Hyprland.
+
+### 2.14. Principle 14: Prepress Color Fidelity, Mechanical Imposition & Cryptographic Hardening
+- **The Defect in Existing Viewers**: Desktop open-source readers discard CMYK press color accuracy, lack print imposition tooling with paper creep compensation, prompt users with spurious password modals for empty-password files, and ignore ISO 32000 permissions bitmasks.
+- **Kiyo's Solution**:
+  - **LittleCMS 2.16 3D LUT**: Converts device CMYK press profiles (FOGRA51, GRACoL) into calibrated RGB via a $33 \times 33 \times 33$ 3D LUT texture in GPU VRAM, backed by an out-of-gamut zebra warning shader evaluating CIEDE2000 ($\Delta E_{00}$).
+  - **Booklet Saddle-Stitch Imposition & Creep**: Imposes signatures with the exact mechanical creep formula $\Delta_{\text{creep}}(k) = k \cdot t$, shifting inner pages inward to guarantee uniform outer margins after guillotine face trimming. Emits full prepress printer marks (trim, bleed, fold, CMYK color bars).
+  - **Hardened Cryptography & Strict `/P` Table 22**: Transparent empty-user-password auto-probing, strict enforcement of ISO 32000 Table 22 `/P` bitmasks (Bits 3, 4, 5, 6, 9, 10, 11, 12), and AES-256 Rev 5/6 decryption with SASLprep Unicode normalization.
+

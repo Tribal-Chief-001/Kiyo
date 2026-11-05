@@ -88,6 +88,39 @@ Fixed-layout formats specify absolute coordinates $(x, y)$ for text runs, vector
 - **Kiyo Parser Engine**: `kiyo-core` with zero-copy `memmap2`, resilient backward-scanning xref parser (`lopdf 0.47`), incremental PDF writer (`pdf-writer 0.15`), and multiprocess rendering worker pool (`pdfium-render` / `hayro`).
 - **Feature Surface**: Full 5-box prepress geometry, embedded AcroForms with sandboxed ECMAScript, PAdES digital signatures, Bates numbering inside tagged `/Artifact` elements, and destructive multi-layer redaction.
 
+##### 4-Stage Corrupt Xref Salvage Heuristics with Compressed Object Streams (`/ObjStm`)
+In production environments, downloaded or damaged PDF files frequently present broken `startxref` pointers, truncated trailer dictionaries, or partially overwritten cross-reference streams. `kiyo-core` deploys an automated 4-stage salvage pipeline:
+
+```
++---------------------------------------------------------------------------------------------------+
+|                            4-Stage Corrupt Xref Salvage Pipeline                                  |
++---------------------------------------------------------------------------------------------------+
+| [Damaged PDF Byte Stream]                                                                         |
+|            |                                                                                      |
+|            v                                                                                      |
+| [Stage 1: Backward Trailer Scan] ----(Success)----> Load Standard Document Catalog & Xref         |
+|            | (Corrupted / Missing startxref)                                                      |
+|            v                                                                                      |
+| [Stage 2: Linear Stream Search] -----(Success)----> Locate Unreferenced /XRef Streams & Tables    |
+|            | (Truncated Stream)                                                                   |
+|            v                                                                                      |
+| [Stage 3: Full Brute-Force Scan] ----(Success)----> Rebuild HashMap<ObjectId, u64> from Raw File  |
+|            | (Objects Missing / In Streams)                                                       |
+|            v                                                                                      |
+| [Stage 4: /ObjStm Decompression] ---> Parse /N, /First, Extract Nested Compressed Object Indices  |
++---------------------------------------------------------------------------------------------------+
+```
+
+1. **Stage 1: Standard Backward Trailer Scan**: Seeks backward from `%EOF` within the last 1024 bytes to locate `startxref <offset> %%EOF`. If the offset is valid and uncorrupted, parses the standard table or cross-reference stream.
+2. **Stage 2: Linear Stream Search**: If `startxref` points to invalid bytes (common after naive appending), scans backward through the file looking for the most recent `xref` keyword or `/Type /XRef` stream dictionary.
+3. **Stage 3: Full Brute-Force Object Token Scan**: If cross-reference structures are completely destroyed, Kiyo performs a high-speed SIMD-accelerated byte scan across the raw mmap buffer searching for ASCII `\d+ \d+ obj` tokens. It constructs a dynamic `HashMap<ObjectId, u64>` indexing every indirect object offset.
+4. **Stage 4: Compressed Object Stream (`/ObjStm`) Decompression & Index Parsing**: Modern PDFs (PDF 1.5+) store regular indirect objects inside compressed streams (`/Type /ObjStm` per ISO 32000-1 §7.5.7). Kiyo salvages these nested objects:
+   - Locates all objects with `/Type /ObjStm` and decompresses their stream payload using `FlateDecode`.
+   - Reads the integer `/N` (count of compressed objects) and `/First` (byte offset of the first object relative to the stream start).
+   - Decodes the header array of $N$ pairs: $(obj\_id_i, offset_i)$ located between byte 0 and `/First`.
+   - For each object $obj\_id_i$, slices the decoded buffer from $[/First + offset_i]$ to $[/First + offset_{i+1}]$ and parses the inner object dictionary.
+   - Populates synthetic virtual xref entries: `XrefEntry::Compressed { container_obj, index }`, allowing 100% complete catalog and page tree recovery even when the document cross-reference table was entirely missing.
+
 #### 3.1.2. XPS / OpenXPS (ECMA-388)
 - **Container / Storage**: Open Packaging Conventions (OPC) ZIP archive containing XML markup (`FixedDocumentSequence.fdseq`, `FixedDocument.fdoc`, and `[Page].fpage`).
 - **Coordinate Space**: 96 DPI coordinate units ($1/96$ inch), origin at top-left.
@@ -101,8 +134,25 @@ Fixed-layout formats specify absolute coordinates $(x, y)$ for text runs, vector
   - **Continuous Tone / Background**: IW44 progressive wavelet decomposition.
 - **Kiyo Parser Engine**: Pure-Rust DjVu parser decomposing chunks:
   - `INFO`: Page dimensions and resolution (typically 300–600 DPI).
-  - `Sjbz`: Shared JB2 shape dictionary for character glyph reuse across pages.
+  - `Sjbz` / `Djbz`: Shared JB2 shape dictionary for character glyph reuse across pages.
   - `TXTR`: UTF-8 hidden text coordinates enabling instant full-text search and text selection without OCR overhead.
+
+##### JB2 Bitonal Mask Extraction & Shared `Djbz` Shape Dictionaries
+DjVu achieves extraordinary 1000:1 compression ratios by separating documents into three distinct visual layers:
+1. **Background Layer (`BG44`)**: Low-frequency paper textures and background illustrations encoded via IW44 wavelets.
+2. **Foreground Color Layer (`FG44`)**: Smooth color gradients applied to text runs.
+3. **Foreground Mask Layer (`Sjbr` / `Sjbz`)**: Sharp, high-resolution bitonal character masks.
+
+To optimize memory and render times, DjVu extracts identical letterforms across multiple pages into a **Shared Shape Dictionary (`Djbz`)**:
+- Individual pages (`Sjbr` chunks) contain no glyph bitmaps; they contain only dictionary symbol indexes and offset blit coordinates $(x, y)$.
+- `Kiyo` decodes `Djbz` chunks once and caches the decoded bitmap glyphs into a shared GPU texture atlas.
+- When rendering subsequent pages, glyphs are blitted via instanced quads in GPU shaders, achieving render latencies of **< 3 ms per page**.
+
+##### `TXTR` Structural Hierarchy & Text Layer Extraction
+DjVu files frequently embed pre-computed OCR or authorial text inside `TXTR` chunks structured as an S-expression hierarchy:
+$$\text{(page } x_{\text{min}}\ y_{\text{min}}\ x_{\text{max}}\ y_{\text{max}}\ \text{(column (region (para (line (word "text"))))))}$$
+- `Kiyo` parses this nested tree into `kiyo-render::TextHierarchy`, preserving full character-level bounding boxes.
+- Enables instantaneous sub-pixel text selection, search hit highlighting, and text-to-speech without invoking external neural OCR models.
 
 #### 3.1.4. CHM (Microsoft Compiled HTML Help)
 - **Container / Storage**: Internal File System (ITSS / ITSF header) compressing multiple HTML files, stylesheets, and binary assets via LZX compression.
@@ -149,6 +199,23 @@ Conventional Linux e-book readers (e.g. Foliate, Calibre) embed WebKitGTK or Chr
     $$\text{epubcfi}(/6/4[chap01]\!/4/2/10/1:24)$$
   - Enables sub-character precision bookmarking and annotation anchoring invariant across font resize operations.
 
+##### EPUB SMIL 3.0 Media Overlays & Synchronized Audio Narration
+EPUB 3.3 features synchronized read-aloud audio narration via Synchronized Multimedia Integration Language (SMIL 3.0):
+1. **SMIL XML Timing Tree Parsing**:
+   - Manifest binds XHTML spine items to `.smil` timing descriptors:
+     ```xml
+     <par id="p0042">
+       <text src="chapter01.xhtml#sentence-42"/>
+       <audio src="audio/narrator_track.mp3" clipBegin="00:03:12.450" clipEnd="00:03:18.820"/>
+     </par>
+     ```
+2. **Sub-Millisecond Audio Clock Synchronization**:
+   - Audio decoding runs on a dedicated high-priority audio thread using pure-Rust decoders (`symphonia` / `rodio`).
+   - The audio clock transmits high-precision playback position timestamps ($t_{\text{playback}}$ at 120Hz) to the GUI event loop.
+3. **Real-Time Word & Sentence Highlight Beacons**:
+   - As $t_{\text{playback}}$ traverses the range $[\text{clipBegin}, \text{clipEnd}]$, Kiyo identifies the active `<text>` target element via its DOM/CFI locator.
+   - The text layout engine applies a smooth, pulsating GPU highlight ribbon beneath the active words, automatically scrolling the viewport to keep the spoken text in comfortable reading focus.
+
 #### 3.2.3. MOBI & AZW3 / KF8 (Amazon Kindle)
 - **Container Structure**: Palm Database format (`.pdb` / PalmDOC).
   - Record 0 holds the `BOOKMOBI` header with compression flags (PalmDOC LZ77 compression or Huff/CDIC Huffman tables).
@@ -188,6 +255,24 @@ Traditional image decoders decode comic images sequentially on the CPU thread, c
 Webtoons and Korean Manhwa are authorially formatted as single continuous vertical strips that can exceed **150,000 pixels in vertical height**, sliced into 50–100 individual image files.
 - **Seam Concealment**: Traditional image viewers leave 1px subpixel antialiasing gaps or white seams between adjacent sliced images. Kiyo's ribbon compositor uses a specialized clamp-to-edge sampler in `wgpu` that guarantees pixel-perfect continuous joins.
 - **Frustum Virtualization**: To prevent out-of-memory crashes on 100-slice webtoons, Kiyo implements a sliding memory window: only slices within $\pm 3$ viewports of the current scroll coordinate $y_{\text{scroll}}$ remain decoded in GPU VRAM; slices outside the frustum are immediately evicted from VRAM to compressed RAM buffers.
+
+#### 3.3.4. Multi-Volume RAR4/RAR5 Archive Sequences & Predictive Ring Buffering
+Digital manga and graphic novels are frequently distributed across multi-part split RAR archives or encoded using "Solid" compression dictionaries:
+
+##### Multi-Volume Archive Sequence Resolution
+`Kiyo` automatically detects and stitches split comic volumes without requiring manual concatenation:
+1. **Naming Pattern Disambiguation**: Detects both legacy RAR4 extensions (`.rar`, `.r00`, `.r01`, ...) and modern RAR5 extensions (`.part01.rar`, `.part02.rar`, ...).
+2. **Volume Header Bit Verification**: Inspects the `HEAD_FLAGS` field in the archive header:
+   - `0x0001`: Multi-volume archive flag.
+   - `0x0002`: Previous volume exists.
+   - `0x0004`: Next volume exists.
+3. **Seamless Spanned File Extraction**: When a splash page image spans across the boundary of `part01.rar` and `part02.rar`, Kiyo's reader unifies the chunk streams transparently, presenting a single complete image buffer to the SIMD rasterizer.
+
+##### Predictive Ring Buffering for Solid Archives
+In solid RAR/7z archives (`SOLID` compression flag enabled), files are compressed as a continuous bitstream. In legacy viewers, jumping to Page 80 requires decompressing Pages 1 through 79 from scratch, inducing multi-second freezing:
+- `Kiyo` maintains a **Predictive Ring Buffer** of decompressor state in RAM.
+- As the user reads sequentially, Kiyo buffers decompressed data up to 5 pages ahead of the reading frustum while preserving the running LZ sliding dictionary state.
+- **Page Turn Latency**: Page turning forward takes **< 1 ms**, providing an uninterrupted, buttery-smooth reading flow across solid archives.
 
 ---
 

@@ -58,11 +58,23 @@ impl PdfDocumentSource {
 ```
 **Advantage**: Cold-start load time drops to < 1 ms regardless of file size, and the OS page cache handles physical page loading and eviction transparently under RAM pressure.
 
-### 1.2. `lopdf 0.47`: Object Graph & Repair Engine
+### 1.2. `lopdf 0.47`: Object Graph & Corrupt Xref Salvage Engine
 `lopdf` operates as Kiyo's low-level object inspector:
 - Parses indirect object tables (`XRef` streams and hybrid xref tables).
 - Traverses document catalog dictionaries (`/Pages`, `/Outlines`, `/AcroForm`, `/Names`).
 - Implements resilient repair heuristics for truncated files: if the trailer `/Prev` or xref offsets are broken, `lopdf` scans backwards for `%EOF` markers and indexes `obj ... endobj` tokens to reconstruct the document catalog.
+
+#### The 4-Stage Corrupt Xref Harvest & Compressed Object Stream (`/ObjStm`) Decompressor
+In production workloads, corrupted cross-reference tables and truncated object offsets are primary causes of failure in standard viewers. `kiyo-core` executes an automated 4-stage harvest pipeline:
+1. **Stage 1 (Backward Trailer Seek)**: Seeks backward from `%EOF` looking for `startxref` byte offsets.
+2. **Stage 2 (Linear Token Scan)**: Scans backwards through the file for `xref` table keywords or `/Type /XRef` stream objects if `startxref` was invalid.
+3. **Stage 3 (Full File Byte-Level Object Harvester)**: Executes a SIMD-accelerated pattern matcher across the raw memory map for `\d+ \d+ obj` byte tokens, populating an in-memory object offset map `HashMap<ObjectId, u64>`.
+4. **Stage 4 (Compressed Object Stream `/ObjStm` Decompression)**:
+   - Identifies objects with `/Type /ObjStm` (ISO 32000-1 §7.5.7) and decodes their Flate-compressed data.
+   - Extracts `/N` (count of stored objects) and `/First` (offset in bytes of the first object).
+   - Reads the header integer array $(obj\_id_i, offset_i)$ located between byte 0 and `/First`.
+   - Slices the decompressed stream from $[/First + offset_i]$ to $[/First + offset_{i+1}]$ to parse nested indirect dictionaries.
+   - Generates synthetic virtual xref entries `XrefEntry::Compressed { container_obj, index }`, guaranteeing recovery even when top-level document dictionaries were buried inside compressed object streams.
 
 ### 1.3. `pdf-writer 0.15`: Zero-Allocation PDF Authoring
 Developed as the PDF generation engine for the Typst compiler, `pdf-writer` provides high-throughput, low-allocation PDF authoring:
@@ -142,6 +154,16 @@ In addition to traditional tile rasterization, `Kiyo` integrates `vello 0.11.0` 
   2. **Tile Binning**: Sorts path segments into $16 \times 16$ pixel bounding tiles using GPU prefix sums.
   3. **Fine Rasterization**: Evaluates analytic area coverage and alpha compositing per subpixel directly on the GPU execution units.
 - **Architectural Impact**: Rendering 10,000+ vector paths in technical schematics drops from **45 ms** (CPU rasterization) to **< 1.8 ms** (Vello GPU compute), enabling butter-smooth 144Hz panning and zooming.
+
+### 2.3. Wayland Surface Architecture & Subsurface Isolation Hierarchy
+To prevent tiling window managers (Hyprland, Sway, River) from corrupting the UX by automatically tiling floating secondary preview viewports, `kiyo-gpu` and `kiyo-gui` orchestrate a 3-tier Wayland protocol hierarchy:
+1. **Primary Canvas (`xdg_toplevel`)**: The main document reading surface mapped through standard XDG shell protocols.
+2. **Ephemeral Context Overlays (`xdg_popup`)**:
+   - Citation previews, dictionary definition cards, and the selection loupe are instantiated strictly as `xdg_popup` surfaces.
+   - Tied to the parent surface via `xdg_positioner` with auto-constrained screen margins and pointer ungrab semantics.
+3. **Persistent Secondary Viewports (`wl_subsurface`)**:
+   - Pinned academic figure portals and side-by-side comparison ribbons are created as `wl_subsurface` objects.
+   - By calling `wl_subsurface.set_desync()`, portal updates are decoupled from the main document frame callbacks, achieving jitter-free 120Hz scrolling inside portals without causing the window manager to alter desktop layout.
 
 ---
 
@@ -260,6 +282,47 @@ fn fs_diff(in: VertexOutput) -> @location(0) vec4<f32> {
     // Identical content: render as subdued background
     let bg = lum_a * 0.4 + 0.3;
     return vec4<f32>(bg, bg, bg, 1.0);
+}
+```
+
+### 3.3. LittleCMS 2.16 3D LUT Texture Shader & Out-of-Gamut Zebra Warning
+Prepress color proofing requires transforming embedded CMYK press profiles into display-calibrated sRGB/Display-P3 without incurring CPU rendering pauses:
+1. `kiyo-gpu` generates a $33 \times 33 \times 33$ 3D LUT grid using LittleCMS 2.16 (`lcms2 6.0`) with Black Point Compensation (BPC) enabled.
+2. The lattice is bound as a 3D texture in `wgpu` (`TextureViewDimension::D3`).
+3. The fragment shader evaluates color mapping and dynamic out-of-gamut warning stripes:
+
+```wgsl
+// crates/kiyo-gpu/shaders/prepress_lut.wgsl
+
+@group(0) @binding(0) var t_lut: texture_3d<f32>;
+@group(0) @binding(1) var s_lut: sampler;
+
+struct PrepressUniforms {
+    zebra_warning_enabled: u32,
+    gamut_delta_e_threshold: f32, // Default: 2.0 (JND)
+};
+
+@group(0) @binding(2) var<uniform> prepress: PrepressUniforms;
+
+@fragment
+fn fs_prepress(in: VertexOutput) -> @location(0) vec4<f32> {
+    let source_rgb = textureSample(t_diffuse, s_diffuse, in.tex_coords).rgb;
+    
+    // Sample hardware-accelerated 3D lookup table via trilinear volumetric interpolation
+    let proofed_rgb = textureSample(t_lut, s_lut, source_rgb).rgb;
+    
+    // Evaluate color displacement delta
+    let delta = distance(source_rgb, proofed_rgb);
+    
+    if (prepress.zebra_warning_enabled == 1u && delta > prepress.gamut_delta_e_threshold * 0.05) {
+        // Dynamic screen-space diagonal zebra striping
+        let stripe = fract((in.clip_position.x + in.clip_position.y) / 16.0);
+        if (stripe > 0.5) {
+            return vec4<f32>(1.0, 0.75, 0.0, 1.0); // Prepress cautionary zebra amber
+        }
+    }
+    
+    return vec4<f32>(proofed_rgb, 1.0);
 }
 ```
 

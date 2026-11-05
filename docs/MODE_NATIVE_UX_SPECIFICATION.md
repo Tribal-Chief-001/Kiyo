@@ -193,3 +193,174 @@ Workstation Mode transforms Kiyo into a full Adobe Acrobat Pro replacement for d
 - **Bates Numbering Wizard**: Prefix, suffix, zero-padding, position selection, and tagged `/Artifact` emission.
 - **AcroForm Builder & Tester**: Create and test form fields, attached ECMAScript validation scripts, and preview calculated totals.
 - **Visual & Structural Diff Viewer**: Cyan/Magenta revision overlay with pixel sensitivity threshold and text delta lists.
+
+---
+
+## 6. Kinetic Scrolling Physics Engine & Detent Impulse
+
+To eliminate the jarring, mechanical step-scrolling common to legacy Linux PDF readers, `Kiyo` incorporates a continuous kinetic physics simulation executed directly on the 120Hz/144Hz presentation loop.
+
+```
++---------------------------------------------------------------------------------------------------+
+|                              Kiyo Kinetic Scrolling Simulation Architecture                       |
++---------------------------------------------------------------------------------------------------+
+|  [Input: Wheel Detent / Touch Drag] ---> [Impulse Injector: J_wheel = +/- 350 px/s]               |
+|                                                     |                                             |
+|                                                     v                                             |
+|                     [Momentum Decay: dv/dt = -mu_visc * v - c_aero * v * |v|]                     |
+|                                                     |                                             |
+|                         +---------------------------+---------------------------+                 |
+|                         | (Within Document Bounds)                              | (Past Bounds)   |
+|                         v                                                       v                 |
+|                [Linear Displacement]                                 [Overscroll Resistance]      |
+|                y += v * dt                                           y_disp = y_bound +           |
+|                                                                      d * tanh(Delta y / d)        |
+|                                                                                 |                 |
+|                                                                                 v                 |
+|                                                                      [Harmonic Restitution]       |
+|                                                                      zeta = 1.0, omega_n = 26     |
++---------------------------------------------------------------------------------------------------+
+```
+
+### 6.1. Viscous and Aerodynamic Momentum Decay
+Once a fling or rapid scroll gesture is released, velocity decays according to combined viscous fluid friction and quadratic aerodynamic drag:
+$$\frac{dv}{dt} = -\mu_{\text{visc}} v - c_{\text{aero}} v |v|$$
+- $\mu_{\text{visc}} = 3.5\text{ s}^{-1}$: Provides natural, progressive deceleration at lower velocities.
+- $c_{\text{aero}} = 0.0012\text{ px}^{-1}$: Clamps high-velocity flings smoothly, preventing disorienting runaway skips across thousands of pages.
+
+### 6.2. Non-Linear Overscroll Pull Resistance (Rubber-Banding)
+When the user drags past the beginning ($y < 0$) or end ($y > y_{\text{max}}$) of a document, boundary pull resistance is modulated using a hyperbolic tangent clamp:
+$$y_{\text{disp}} = y_{\text{bound}} + d \cdot \tanh\left(\frac{\Delta y}{d}\right)$$
+- $d = 120.0\text{ pt}$: Maximum asymptotic displacement limit.
+- $\Delta y$: Raw unconstrained cursor displacement beyond the boundary.
+- **Behavior**: As $\Delta y \to \infty$, $y_{\text{disp}}$ smoothly approaches $y_{\text{bound}} + d$ without abrupt hard stops.
+
+### 6.3. Critically Damped Harmonic Restitution
+Upon pointer release in an overscrolled state, the viewport snaps back to document bounds governed by a 2nd-order harmonic spring equation:
+$$\frac{d^2 x}{dt^2} + 2\zeta\omega_n \frac{dx}{dt} + \omega_n^2 x = 0$$
+- $\zeta = 1.0$: Damping ratio calibrated to **critical damping** (strictly zero oscillatory bounce or overshoot).
+- $\omega_n = 26.0\text{ rad/s}$: Natural undamped angular frequency.
+- **Settling Time**: Total restitution duration is $t_{\text{settle}} \approx \frac{4}{\omega_n} \approx 154\text{ ms}$, delivering a crisp, tactile snap-back to the page edge.
+
+### 6.4. Mouse Wheel Detent Impulse Smoothing
+Discrete notched mouse wheels generate discontinuous step events. `Kiyo` converts wheel notches into smooth kinetic impulses:
+- Each detent notch imparts an instantaneous velocity impulse $J_{\text{wheel}} = \pm 350.0\text{ px/s}$.
+- Multiple rapid notches accumulate additively into $v_0 = \sum J_i$, which is integrated over sub-frame intervals $\Delta t \approx 8.33\text{ ms}$, entirely eliminating stutter and micro-freezes.
+
+---
+
+## 7. Ergonomic Micro-Interactions, Gestures & Spatial Navigation
+
+Document navigation in Kiyo is designed around micro-ergonomics that preserve cognitive focus.
+
+### 7.1. Perceptually Uniform Logarithmic Zoom
+Linear zoom increments ($s_{k+1} = s_k + \Delta s$) feel sluggish at high magnification and violent at low zoom levels. Kiyo applies continuous exponential zoom:
+$$s(t) = s_0 \cdot 2^{v_z t}$$
+To maintain visual stability, Kiyo enforces the **Stationary Cursor Invariant**: the exact document point $\mathbf{p}_{\text{doc}}$ beneath the mouse pointer must remain stationary on screen throughout the zoom transition:
+$$\mathbf{p}_{\text{doc}} = \frac{\mathbf{p}_{\text{cursor}} - \mathbf{T}(t)}{s(t)} = \text{const} \implies \mathbf{T}(t) = \mathbf{p}_{\text{cursor}} - s(t) \cdot \mathbf{p}_{\text{doc}}$$
+where $\mathbf{T}(t)$ is the viewport translation vector.
+
+### 7.2. 2.5D Paper Curl vs. Minimal Slide & Accessibility Sync
+- **2.5D Cylindrical Paper Curl**: In E-Reader and Comic modes, turning a page triggers a realistic 2.5D vertex shader simulating cylindrical paper deformation, complete with ambient occlusion shadow cast on the underlying sheet.
+- **Reduced Motion Compliance**: Before initiating animations, Kiyo queries the FreeDesktop portal or D-Bus property:
+  `org.freedesktop.appearance.prefers-reduced-motion`
+  If set to `1` (or in remote SSH/X11 sessions), all 2.5D curl and slide transitions are instantaneously disabled in favor of zero-latency atomic buffer swaps.
+
+### 7.3. Selection Loupe with Measurement Crosshairs
+Holding `Z` or `Alt + Left Click Drag` activates the **Selection Loupe**:
+- A floating circular magnifying lens rendering a $3.0\times$ magnified view of the underlying canvas.
+- Overlays precision prepress crosshairs with sub-pixel PDF point dimensions ($w \times h$), font metrics, and live RGB/CMYK pixel readouts.
+
+### 7.4. Hop/Avy Character-Filtered Spatial Jump Tags
+Modeled after Emacs Avy and Vim Sneak, Kiyo enables mouse-free navigation across visible pages:
+1. The user presses `f` followed by a target character (e.g. `f t`).
+2. Kiyo identifies all words on screen starting with `'t'` and overlays a distinct, high-contrast 2-letter mnemonic badge (e.g. `[aa]`, `[ab]`, `[ac]`).
+3. Typing the 2-letter badge instantly jumps the cursor and reading ruler to that exact word in **< 1 ms**, eliminating tedious mouse targeting.
+
+### 7.5. Wayland Continuous Pointer & Touchpad Gestures
+Leveraging the `zwp_pointer_gestures_v1` protocol, Kiyo handles raw touchpad hardware streams:
+- Continuous 2-finger pinch-to-zoom with direct sub-millimeter finger tracking.
+- Continuous 2-finger rotation gestures for rotating blueprints and schematics.
+- 3-finger horizontal swipe for instantaneous document history traversal (Back / Forward).
+
+### 7.6. Haptic Micro-Clicks
+On supported Linux touchpads (e.g. ThinkPad haptic pads, Apple Magic Trackpad under Linux) or via subtle system audio ticks, Kiyo emits micro-haptic clicks when the viewport snaps to 100% zoom, page boundaries, or 90° rotation detents.
+
+---
+
+## 8. Intelligent Whitespace Auto-Cropping & Margin Suppression
+
+Scanned PDFs and print-ready books frequently contain wide outer paper margins designed for physical binding. On laptop and tablet screens, these margins waste up to 40% of visible display area.
+
+```
++---------------------------------------------------------------------------------------------------+
+|                        Kiyo Whitespace Auto-Cropping & Header Heuristic                           |
++---------------------------------------------------------------------------------------------------+
+|  [Raw Page Scan / PDF Vector Canvas]                                                              |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | [Wide Outer Margin]                                                                         |  |
+|  |            +---------------------------------------------------------------+                |  |
+|  |            | Running Header: "Chapter 3: Quantum Chromodynamics" (Page 42) | <--- Detected  |  |
+|  |            +---------------------------------------------------------------+      by Hash   |  |
+|  |            |                                                               |                |  |
+|  |            | Main Typography Block (Meaningful Content)                    |                |  |
+|  |            | - Text runs, equations, figures...                            |                |  |
+|  |            |                                                               |                |  |
+|  |            +---------------------------------------------------------------+                |  |
+|  |            | Running Footer: "Confidential Draft - Internal Use Only"       | <--- Detected  |  |
+|  |            +---------------------------------------------------------------+                |  |
+|  | [Wide Bottom Margin]                                                                        |  |
+|  +---------------------------------------------------------------------------------------------+  |
+|                                                  |                                                |
+|                                                  v                                                |
+|  [Aggressive Margin Crop]: Header/Footer Suppressed, Body Content Scaled to 100% Viewport Width   |
++---------------------------------------------------------------------------------------------------+
+```
+
+### 8.1. Running Header / Footer Suppression Heuristic
+Naive white-box cropping fails on academic papers and books because running headers (e.g. `"Journal of Applied Physics"`) and page numbers prevent vertical margin trimming:
+1. `Kiyo` samples glyph bounds across $K = 5$ consecutive pages.
+2. Identifies text strings residing within the top and bottom 10% vertical margins.
+3. If strings exhibit identical font descriptors, vertical positions $y$, or sequential page numbering syntax (`format!("{n}")`), they are classified as **Peripheral Running Metadata**.
+4. The auto-cropper crops past the running header directly to the primary body text block, automatically scaling readable text size by **up to 45%** on smaller screens.
+
+---
+
+## 9. Synchronized Dual-Document Comparison & GPU Bezier Ribbons
+
+Comparing two revisions of an engineering document or legal contract requires instant visual correlation across structural changes.
+
+### 9.1. Three Synchronization Modes
+1. **Lock-Step Page Lock**: Viewports for Document A and Document B advance in exact lockstep ($P_B = P_A$).
+2. **Proportional Continuous Scrolling**: For documents with disparate page counts (e.g. an expanded 120-page revision vs an 80-page draft), scroll offset is proportionally normalized:
+   $$y_B = y_A \cdot \frac{H_B}{H_A}$$
+   where $H_A, H_B$ represent total document heights.
+3. **Semantic Heading Alignment**: Viewport tracking locks to matching Table of Contents anchors and headings, maintaining alignment even when whole chapters have been inserted or removed.
+
+### 9.2. GPU Translucent Bezier Connector Ribbons
+In side-by-side comparison mode, `kiyo-gpu` renders dynamic cubic Bezier ribbons directly in the viewport margin linking corresponding text blocks between Revision A and Revision B:
+$$\mathbf{B}(t) = (1-t)^3 \mathbf{P}_0 + 3(1-t)^2 t \mathbf{P}_1 + 3(1-t) t^2 \mathbf{P}_2 + t^3 \mathbf{P}_3$$
+- Ribbons are rendered using a translucent WGSL gradient shader (Cyan for Document A anchor $\to$ Magenta for Document B target).
+- Visually guides the human eye directly to shifted, re-wrapped, or modified clauses across side-by-side viewports.
+
+---
+
+## 10. Reading Health, Visual Attention Heatmaps & Crash-Safe Session Journaling
+
+### 10.1. The 20-20-20 Eye Strain Prevention Rule
+To combat asthenopia during marathon reading sessions, Kiyo incorporates an opt-in ergonomic health daemon:
+- Every 20 minutes of active reading, Kiyo gently pulses the viewport luminance down by 15% for 20 seconds.
+- Displays an unobtrusive micro-badge in the corner: `"Take a 20-second break: Look at an object 20 feet (6m) away"`.
+
+### 10.2. Visual Reading Heatmap & Dwell-Time Accumulator
+Kiyo maintains a spatial dwell-time accumulator in memory:
+- Records reader fixation time per paragraph and chapter.
+- Overlays a subtle, toggleable visual heatmap in the document scrollbar: hot regions (red/amber) indicate dense sections that required deep re-reading; cool regions (cyan/gray) highlight skimmed or unread material.
+- 100% private: stored strictly locally in ephemeral session memory.
+
+### 10.3. Crash-Safe Atomic Session Journaling
+To ensure users never lose their place, open portals, or pending form edits during system reboots or power interruptions:
+- Kiyo writes session state to a Write-Ahead Log (`.kiyo-session.wal`).
+- Serialized using `postcard` (compact binary format) and committed to disk via `atomic-write` + POSIX `rename`.
+- On cold launch, Kiyo restores exact viewport coordinates, active portals, bookmarks, and draft AcroForm field entries in **< 3 ms**.
+
