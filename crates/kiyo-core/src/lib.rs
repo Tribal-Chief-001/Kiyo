@@ -1,7 +1,9 @@
 //! `kiyo-core`: Zero-copy PDF document model, cross-reference streaming, and manipulation.
 
+pub mod imposition;
 pub mod universal;
 
+pub use imposition::*;
 pub use lopdf::dictionary;
 pub use universal::*;
 

@@ -121,6 +121,19 @@ In production environments, downloaded or damaged PDF files frequently present b
    - For each object $obj\_id_i$, slices the decoded buffer from $[/First + offset_i]$ to $[/First + offset_{i+1}]$ and parses the inner object dictionary.
    - Populates synthetic virtual xref entries: `XrefEntry::Compressed { container_obj, index }`, allowing 100% complete catalog and page tree recovery even when the document cross-reference table was entirely missing.
 
+##### Linearized PDF & Byte-Serving Architecture (ISO 32000-1 §10.2)
+For large documents (100MB–2GB) hosted on remote HTTP servers or cloud storage:
+- Linearized PDFs order objects so that the first page, document catalog, and all required fonts reside contiguous in the first 64KB of the file.
+- `kiyo-core` detects the `/Linearized 1.0` dictionary within the first 1024 bytes and reads the Primary Hint Stream (`/HintStream`):
+  - Extracts the exact byte ranges for Page 1 resources and issues an asynchronous HTTP Range Request (`Range: bytes=0-65535`).
+  - Displays Page 1 in **< 15 ms** over high-latency networks while speculative worker threads stream remaining pages in the background.
+
+##### Incremental Update Chaining & Revision Rollback
+ISO 32000 defines document modification via appended incremental update sections (new objects + new xref table + new trailer pointing back via `/Prev`):
+- `kiyo-core` traverses the `/Prev` pointer chain from the EOF trailer back to the original generation:
+  $$\text{Trailer}_k \xrightarrow{\text{/Prev}} \text{Trailer}_{k-1} \xrightarrow{\text{/Prev}} \dots \xrightarrow{\text{/Prev}} \text{Trailer}_0$$
+- Exposes historical audit states: users can inspect every historical revision of a signed or edited document, auditing who changed what and when, or roll back to any prior state before redaction or modification occurred.
+
 #### 3.1.2. XPS / OpenXPS (ECMA-388)
 - **Container / Storage**: Open Packaging Conventions (OPC) ZIP archive containing XML markup (`FixedDocumentSequence.fdseq`, `FixedDocument.fdoc`, and `[Page].fpage`).
 - **Coordinate Space**: 96 DPI coordinate units ($1/96$ inch), origin at top-left.
@@ -153,6 +166,11 @@ DjVu files frequently embed pre-computed OCR or authorial text inside `TXTR` chu
 $$\text{(page } x_{\text{min}}\ y_{\text{min}}\ x_{\text{max}}\ y_{\text{max}}\ \text{(column (region (para (line (word "text"))))))}$$
 - `Kiyo` parses this nested tree into `kiyo-render::TextHierarchy`, preserving full character-level bounding boxes.
 - Enables instantaneous sub-pixel text selection, search hit highlighting, and text-to-speech without invoking external neural OCR models.
+
+##### Indirect DjVu Multi-File Documents & `INCL` Chunk Resolution
+DjVu supports multi-page indirect documents where an index file (`index.djvu`) references external single-page files and shared dictionary files via `INCL` chunks:
+- `kiyo-core` resolves external relative paths securely (preventing directory traversal attacks `../`).
+- Maintains an asynchronous file-loader pool that pulls and verifies included shape dictionaries (`dict.djvu`) ahead of time, ensuring transparent pagination across multi-file document sets without blocking UI render threads.
 
 #### 3.1.4. CHM (Microsoft Compiled HTML Help)
 - **Container / Storage**: Internal File System (ITSS / ITSF header) compressing multiple HTML files, stylesheets, and binary assets via LZX compression.
@@ -216,6 +234,12 @@ EPUB 3.3 features synchronized read-aloud audio narration via Synchronized Multi
    - As $t_{\text{playback}}$ traverses the range $[\text{clipBegin}, \text{clipEnd}]$, Kiyo identifies the active `<text>` target element via its DOM/CFI locator.
    - The text layout engine applies a smooth, pulsating GPU highlight ribbon beneath the active words, automatically scrolling the viewport to keep the spoken text in comfortable reading focus.
 
+##### Corrupt EPUB Container Salvage & `EOCD` Reconstruction
+In damaged or truncated EPUB downloads, the ZIP End of Central Directory (`EOCD`) signature (`0x06054b50`) is frequently missing:
+- Standard ZIP extractors fail with `InvalidZipArchive` errors.
+- `kiyo-core` initiates a linear recovery pass scanning the byte stream for Local File Header signatures (`0x04034b50`).
+- Reconstructs a synthetic Central Directory map in memory, parses compressed Deflate/Zstd chunks, and extracts undamaged XHTML spine chapters and CSS stylesheets directly into the reader DOM.
+
 #### 3.2.3. MOBI & AZW3 / KF8 (Amazon Kindle)
 - **Container Structure**: Palm Database format (`.pdb` / PalmDOC).
   - Record 0 holds the `BOOKMOBI` header with compression flags (PalmDOC LZ77 compression or Huff/CDIC Huffman tables).
@@ -273,6 +297,11 @@ In solid RAR/7z archives (`SOLID` compression flag enabled), files are compresse
 - `Kiyo` maintains a **Predictive Ring Buffer** of decompressor state in RAM.
 - As the user reads sequentially, Kiyo buffers decompressed data up to 5 pages ahead of the reading frustum while preserving the running LZ sliding dictionary state.
 - **Page Turn Latency**: Page turning forward takes **< 1 ms**, providing an uninterrupted, buttery-smooth reading flow across solid archives.
+
+##### Encrypted Archive Key Management via Linux Secret Service
+Password-protected comic archives (encrypted ZIP/RAR/7z volumes):
+- `kiyo-core` queries the FreeDesktop Secret Service (`org.freedesktop.secrets`) before prompting the user, checking for saved collection master passwords keyed by file path or hash.
+- Supports AES-256 encrypted PKZIP archives and encrypted RAR5 block headers without requiring external helper binaries.
 
 ---
 

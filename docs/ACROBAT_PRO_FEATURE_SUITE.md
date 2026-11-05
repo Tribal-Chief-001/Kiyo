@@ -357,6 +357,17 @@ To prevent costly print press disasters where vibrant monitor colors clip to mud
   }
   ```
 
+### 9.4. Prepress Color Separation Plates & Dot Gain Inspection
+In high-end offset printing, each ink plate (Cyan, Magenta, Yellow, Black, and Spot PMS inks) is etched onto independent physical aluminum cylinders.
+- `Kiyo` provides an interactive Separation Plate Previewer: users can isolate individual plates ($C, M, Y, K$) or inspect overprint knockouts.
+- **Dot Gain Compensation (ISO 12647-2)**: Simulates physical press dot gain (the mechanical spread of liquid ink into porous paper fibers) using calibrated tone value increase (TVI) response curves, preventing muddy mid-tone shadows on newsprint or uncoated stock.
+
+### 9.5. PDF/X Preflight Conformance Engine (ISO 15930)
+Kiyo validates professional graphics against ISO PDF/X standards:
+- **PDF/X-1a:2001**: Strictly CMYK + Spot colors; prohibits RGB, device-independent CIE color spaces, transparency, and un-embedded font subsets.
+- **PDF/X-3:2002**: Permits ICC-tagged RGB workflows alongside CMYK, requiring explicit `/OutputIntent` dictionaries (`GTS_PDFX`).
+- **PDF/X-4:2010**: Permits live native PDF transparency and 16-bit raster data with calibrated output profiles.
+
 ---
 
 ## 10. N-Up Sheet Imposition, Booklet Saddle-Stitch Engine & Printer Marks
@@ -393,6 +404,11 @@ $$\Delta_{\text{creep}}(k) = k \cdot t$$
 - $k \in [0, S - 1]$ is the zero-indexed sheet layer index, where $k = 0$ is the outermost sheet (cover) and $k = S - 1$ is the innermost centerfold sheet.
 - $t$ is the single-sheet paper thickness in PDF points ($1\text{ mm} \approx 2.83465\text{ pt}$; typical 80 gsm bond paper $t \approx 0.10\text{ mm} \approx 0.2835\text{ pt}$).
 - **Spine Displacement**: For sheet $k$, inner pages are shifted inward toward the binding fold by $\Delta_{\text{creep}}(k)$. This ensures that after guillotine face trimming, outer margins are strictly uniform across all signatures.
+
+#### Piecewise Hybrid Stock Mechanical Creep Formula
+In premium magazines, catalogs, and booklets with heavy cardstock covers (e.g. 300 gsm cover, $t_{\text{cover}} \approx 0.30\text{ mm} \approx 0.85\text{ pt}$) enclosing lightweight interior bond pages (e.g. 80 gsm, $t_{\text{body}} \approx 0.10\text{ mm} \approx 0.2835\text{ pt}$), a uniform linear formula under-compensates the inner signature. Kiyo deploys the **Piecewise Hybrid Stock Creep Equation**:
+$$\Delta_{\text{creep}}(k) = \begin{cases} 0 & k = 0 \text{ (Outermost Cover)} \\ t_{\text{cover}} + (k - 1) \cdot t_{\text{body}} & k \in [1, S - 1] \text{ (Interior Signatures)} \end{cases}$$
+Implemented and mathematically verified in `crates/kiyo-core/src/imposition.rs` with sub-micron geometric accuracy.
 
 ### 10.3. N-Up Sheet Imposition Engine
 Kiyo supports arbitrary matrix layouts: $2 \times 1$ (2-up), $2 \times 2$ (4-up), $4 \times 2$ (8-up), and $4 \times 4$ (16-up).

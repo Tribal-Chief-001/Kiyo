@@ -22,6 +22,7 @@
       "build-commands": [
         "cargo build --release",
         "install -Dm755 target/release/kiyo /app/bin/kiyo",
+        "install -Dm755 target/release/kiyo-remote /app/bin/kiyo-remote",
         "install -Dm644 packaging/org.kiyo.Kiyo.desktop /app/share/applications/org.kiyo.Kiyo.desktop",
         "install -Dm644 packaging/org.kiyo.Kiyo.svg /app/share/icons/hicolor/scalable/apps/org.kiyo.Kiyo.svg"
       ]

@@ -75,6 +75,7 @@ Kiyo/
 - **Key Responsibilities**:
   - Memory-mapping PDF files via `memmap2::Mmap` for sub-millisecond document loading regardless of file size (100MB+ documents map in < 1ms).
   - 4-Stage Corrupt Xref Salvage Pipeline: Backward trailer scan, linear token scan, brute-force `\d+ \d+ obj` byte scanning, and Compressed Object Stream (`/ObjStm` ISO 32000-1 §7.5.7) decompression extracting nested dictionary offsets via `/First` and `/N`.
+  - Prepress Imposition & Saddle-Stitch Engine: Uniform and piecewise hybrid paper creep calculation ($\Delta_{\text{creep}}(k)$), N-up grid signature placement, and printer marks generator (`crates/kiyo-core/src/imposition.rs`).
   - Exposing an immutable document DOM with copy-on-write (CoW) page tree manipulation.
   - Bidirectional SyncTeX line/column $\leftrightarrow$ PDF coordinate translation.
   - XY-cut recursive spatial decomposition of glyph runs for reading-order extraction and table reconstruction.
@@ -138,6 +139,10 @@ Kiyo/
     - `kiyo extract`: High-fidelity Markdown, plain text, and embedded asset extraction.
     - `kiyo watch`: Compiler daemon mode for real-time Typst/LaTeX feedback loops.
     - `kiyo thumbnail`: Sub-5ms page rasterization for Linux Mint Nemo, Nautilus, and Dolphin thumbnailers.
+    - `kiyo impose`: Prepress N-up imposition, booklet saddle-stitching, and mechanical creep compensation.
+    - `kiyo crop-margins`: Intelligent whitespace auto-cropping with running header/footer suppression.
+    - `kiyo remote` & `kiyo-remote`: Sub-millisecond UNIX domain socket IPC control for tiling window managers.
+    - `kiyo prefetch`: Speculative document metadata and thumbnail prefetching daemon (`kiyo-prefetch.service`).
   - GUI desktop viewer launcher: Direct invocation (`kiyo <file>` or `kiyo gui <file>`).
 
 ### 2.7. Architectural Rationale: Retiring TUI to Focus on Headless CLI + Hardware-Accelerated GUI

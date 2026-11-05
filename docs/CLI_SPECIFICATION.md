@@ -8,12 +8,12 @@
                                       +--------------------+
                                       |      kiyo-cli      |
                                       +--------------------+
-                                                |
-        +-------------+------------+------------+------------+------------+-------------+-------------+
-        |             |            |            |            |            |             |             |
-        v             v            v            v            v            v             v             v
-     [merge]       [split]       [diff]       [ocr]      [extract]     [watch]     [thumbnail]      [gui]
-   (Zero-Copy)  (Page Burst)  (Visual/Text) (Sandwich)  (Markdown)   (Hot-Reload) (Nemo Thumbs) (GPU Viewer)
+                                                 |
+        +-------------+------------+------------+------------+------------+-------------+-------------+-------------+---------------+------------+
+        |             |            |            |            |            |             |             |             |               |            |
+        v             v            v            v            v            v             v             v             v               v            v
+     [merge]       [split]       [diff]       [ocr]      [extract]     [watch]     [thumbnail]    [impose]    [crop-margins]    [remote]    [prefetch]
+   (Zero-Copy)  (Page Burst)  (Visual/Text) (Sandwich)  (Markdown)   (Hot-Reload) (Nemo Thumbs) (Prepress)     (Auto-Crop)       (IPC)       (Daemon)
 ```
 
 ### 1.1. CLI Grammar & Command-Line Interface Definition
@@ -79,6 +79,9 @@ pub enum Commands {
 
     /// Control active Kiyo GUI instance via UNIX domain socket IPC (or standalone kiyo-remote)
     Remote(RemoteArgs),
+
+    /// Speculative document metadata and thumbnail prefetching daemon (systemd service)
+    Prefetch(PrefetchArgs),
 }
 
 #[derive(Args, Debug, PartialEq)]
@@ -256,6 +259,15 @@ pub enum RemoteAction {
     JumpTag { tag: String },
     /// Retrieve JSON document and viewport status
     GetStatus,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct PrefetchArgs {
+    #[arg(long, num_args = 1.., help = "Directories to monitor for incoming documents")]
+    pub dirs: Vec<PathBuf>,
+
+    #[arg(long, default_value = "256", help = "Maximum thumbnail cache limit in megabytes")]
+    pub max_cache_mb: u32,
 }
 ```
 
@@ -439,5 +451,14 @@ kiyo-remote get-status
 #   "viewport_frustum": [0.0, 720.0, 595.0, 842.0],
 #   "selected_text": "quantum entanglement"
 # }
+```
+
+### 3.10. Speculative Prefetch & Background Cache Daemon Workflows
+```bash
+# Start background prefetch daemon monitoring Downloads and Documents with a 256MB cache cap
+kiyo prefetch --dirs ~/Downloads ~/Documents --max-cache-mb 256
+
+# Quiet daemon mode suitable for systemd user unit
+kiyo --quiet prefetch --dirs %h/Downloads %h/Documents --max-cache-mb 512
 ```
 

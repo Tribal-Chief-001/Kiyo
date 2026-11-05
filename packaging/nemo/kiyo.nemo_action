@@ -30,3 +30,13 @@ Conditions=selection_count=2;mimetype=application/pdf;
 Name=Merge Selected PDFs into Single Document
 Exec=kiyo merge %F --output "merged_output.pdf"
 Conditions=selection_count=>1;mimetype=application/pdf;
+
+[Action item_impose]
+Name=Impose: Saddle-Stitch Booklet (Prepress)
+Exec=kiyo impose %F --booklet --marks --output "booklet.pdf"
+Conditions=selection_count=1;mimetype=application/pdf;
+
+[Action item_crop]
+Name=Crop: Intelligent Whitespace Trimming
+Exec=kiyo crop-margins %F --preserve-headers --output "cropped.pdf"
+Conditions=selection_count=1;mimetype=application/pdf;

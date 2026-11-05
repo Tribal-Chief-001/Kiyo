@@ -19,3 +19,6 @@ AppDir:
   files:
     include:
       - target/release/kiyo: usr/bin/kiyo
+      - target/release/kiyo-remote: usr/bin/kiyo-remote
+      - packaging/org.kiyo.Kiyo.desktop: usr/share/applications/org.kiyo.Kiyo.desktop
+      - packaging/org.kiyo.Kiyo.svg: usr/share/icons/hicolor/scalable/apps/org.kiyo.Kiyo.svg

@@ -241,6 +241,7 @@ For sandboxed packaging (Flatpak) and hermetic host compatibility, `Kiyo` uses `
       "build-commands": [
         "cargo build --release",
         "install -Dm755 target/release/kiyo /app/bin/kiyo",
+        "install -Dm755 target/release/kiyo-remote /app/bin/kiyo-remote",
         "install -Dm644 packaging/org.kiyo.Kiyo.desktop /app/share/applications/org.kiyo.Kiyo.desktop",
         "install -Dm644 packaging/org.kiyo.Kiyo.svg /app/share/icons/hicolor/scalable/apps/org.kiyo.Kiyo.svg"
       ]
@@ -272,6 +273,9 @@ AppDir:
   files:
     include:
       - target/release/kiyo: usr/bin/kiyo
+      - target/release/kiyo-remote: usr/bin/kiyo-remote
+      - packaging/org.kiyo.Kiyo.desktop: usr/share/applications/org.kiyo.Kiyo.desktop
+      - packaging/org.kiyo.Kiyo.svg: usr/share/icons/hicolor/scalable/apps/org.kiyo.Kiyo.svg
 ```
 
 ---
@@ -367,6 +371,27 @@ For Linux Mint Cinnamon users, Kiyo provides a native desktop desklet:
 - Quick-access menu for recently viewed documents.
 - Global shortcuts for quick screen capture to PDF or opening clipboard documents.
 
+### 8.3. KDE Plasma 6 (Wayland) Integration & Global AppMenu
+On KDE Plasma 6 Wayland sessions:
+- **Global AppMenu**: Exports native window menus over DBus via `com.canonical.AppMenu.Registrar` (`/MenuBar/1`), cleanly docking File, Edit, Prepress, and View actions into the top Plasma panel.
+- **Breeze Accent Synchronization**: Monitors `org.freedesktop.portal.Desktop.Theme` to harmonize UI selection brushes with the user's active KDE accent hue.
+- **KDE Baloo Metadata Indexer**: Ships a headless Baloo extractor plugin (`kiyo-baloo-extractor`) indexing PDF/UA outline tags, author metadata, and invisible OCR layers directly into the local Baloo SQLite database.
+
+### 8.4. GNOME Shell 46+ Global Search Provider
+Kiyo registers a search provider DBus service `org.gnome.Shell.SearchProvider2`:
+- Typing document names, author names, or search queries in the GNOME Shell Activities overview yields instant search hits matching PDF outlines, recent reading locations, and text extracts.
+- Selecting a search hit launches `kiyo gui <file> --page <p>`, instantly jumping to the matching paragraph without intermediate search friction.
+
+### 8.5. XFCE (Thunar) & MATE (Caja) Integration
+For lightweight desktop environments, Kiyo provides drop-in action configurations:
+- **Thunar (`~/.config/Thunar/uca.xml`)**: Adds right-click context items ("Open in Kiyo GPU", "OCR Searchable PDF", "Saddle-Stitch Impose").
+- **Caja (`~/.config/caja/scripts/`)**: Shell scripts wrapping `kiyo diff %F` and `kiyo merge %F`.
+
+### 8.6. Linux Secret Service API (`org.freedesktop.secrets`)
+To protect user credentials:
+- When opening encrypted PDF documents or signing documents with PKCS#12 digital certificates, Kiyo never caches passphrases in cleartext on disk.
+- Interacts with the FreeDesktop Secret Service API (`org.freedesktop.secrets`) backed by GNOME Keyring or KDE KWallet to store and retrieve document passwords keyed by the document's SHA-256 `/ID` hash.
+
 ---
 
 ## 9. Systemd User Service: `kiyo-prefetch.service`
@@ -382,7 +407,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/kiyo watch-folder --dirs %h/Downloads %h/Documents --max-cache-mb 256
+ExecStart=/usr/bin/kiyo prefetch --dirs %h/Downloads %h/Documents --max-cache-mb 256
 Restart=on-failure
 RestartSec=5s
 Nice=19

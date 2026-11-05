@@ -9,8 +9,16 @@ Icon=org.kiyo.Kiyo
 Categories=Office;Viewer;Graphics;Publishing;
 MimeType=application/pdf;application/x-pdf;application/x-bzpdf;application/x-gzpdf;application/epub+zip;application/x-cbz;application/x-cbr;application/x-cb7;application/x-cbt;image/vnd.djvu;application/oxps;application/vnd.ms-xpsdocument;application/x-mobipocket-ebook;application/vnd.amazon.ebook;application/x-fictionbook+xml;text/markdown;
 Keywords=PDF;Viewer;Document;OCR;Diff;GPU;Vim;EPUB;Comic;Manga;CBR;CBZ;DjVu;E-Reader;
-Actions=DiffMode;
+Actions=DiffMode;OcrMode;ImposeMode;
 
 [Desktop Action DiffMode]
 Name=Compare Two PDFs
 Exec=kiyo diff %U
+
+[Desktop Action OcrMode]
+Name=OCR Searchable PDF
+Exec=kiyo ocr --sandwich %U
+
+[Desktop Action ImposeMode]
+Name=Prepress Saddle-Stitch Booklet
+Exec=kiyo impose --booklet --marks %U

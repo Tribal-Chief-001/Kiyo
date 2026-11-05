@@ -53,6 +53,18 @@ pub enum Commands {
 
     /// Generate a raster thumbnail image for file managers (Nemo, Nautilus, Dolphin)
     Thumbnail(ThumbnailArgs),
+
+    /// Prepress N-up imposition, booklet saddle-stitching, mechanical creep, and printer marks
+    Impose(ImposeArgs),
+
+    /// Intelligent whitespace auto-cropping with running header/footer suppression
+    CropMargins(CropMarginsArgs),
+
+    /// Control active Kiyo GUI instance via UNIX domain socket IPC (or standalone kiyo-remote)
+    Remote(RemoteArgs),
+
+    /// Speculative document metadata and thumbnail prefetching daemon (systemd service)
+    Prefetch(PrefetchArgs),
 }
 
 #[derive(Args, Debug, PartialEq)]
@@ -196,6 +208,108 @@ pub struct ThumbnailArgs {
     /// Page index to render (0-based)
     #[arg(short, long, default_value = "0")]
     pub page: u32,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct ImposeArgs {
+    /// Input PDF file to impose
+    #[arg(required = true, value_name = "INPUT")]
+    pub input: PathBuf,
+
+    /// Output destination file path
+    #[arg(short, long, default_value = "imposed.pdf", value_name = "OUTPUT")]
+    pub output: PathBuf,
+
+    /// N-up sheet page layout (e.g. 1, 2, 4, 8)
+    #[arg(long, default_value = "1")]
+    pub nup: u8,
+
+    /// Impose as folded saddle-stitch booklet
+    #[arg(long)]
+    pub booklet: bool,
+
+    /// Mechanical paper thickness/creep delta in pt (0.1mm = 0.2835pt)
+    #[arg(long, default_value = "0.2835")]
+    pub creep: f32,
+
+    /// Embed prepress printer marks (trim ticks, bleed ticks, fold marks, CMYK wedges)
+    #[arg(long)]
+    pub marks: bool,
+
+    /// Gutter spacing between imposed pages in points
+    #[arg(long, default_value = "14.17")]
+    pub gutter: f32,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct CropMarginsArgs {
+    /// Input document with wide margins
+    #[arg(required = true, value_name = "INPUT")]
+    pub input: PathBuf,
+
+    /// Output destination file path
+    #[arg(short, long, default_value = "cropped.pdf", value_name = "OUTPUT")]
+    pub output: PathBuf,
+
+    /// Detect and suppress running headers and footers from margin limits
+    #[arg(long, default_value = "true")]
+    pub preserve_headers: bool,
+
+    /// Safety breathing padding around content text in points
+    #[arg(long, default_value = "12.0")]
+    pub padding: f32,
+
+    /// Luminance threshold to consider a pixel white whitespace [0.0 - 1.0]
+    #[arg(long, default_value = "0.98")]
+    pub threshold: f32,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct RemoteArgs {
+    #[command(subcommand)]
+    pub action: RemoteAction,
+
+    /// Specific Kiyo PID to target (defaults to active focused instance)
+    #[arg(long)]
+    pub pid: Option<u32>,
+}
+
+#[derive(Subcommand, Debug, PartialEq, Clone)]
+pub enum RemoteAction {
+    /// Advance 1 page (respects comic RTL progression)
+    NextPage,
+    /// Move backward 1 page
+    PrevPage,
+    /// Jump directly to target page number
+    Goto {
+        #[arg(value_name = "PAGE")]
+        page: usize,
+    },
+    /// Modify zoom factor ('in', 'out', 'fit-width', 'fit-page', or float like '1.5')
+    Zoom {
+        #[arg(value_name = "LEVEL")]
+        level: String,
+    },
+    /// Toggle Smart Oklab Dark Mode
+    ToggleDark,
+    /// Teleport viewport/cursor to Hop/Avy jump tag
+    JumpTag {
+        #[arg(value_name = "TAG")]
+        tag: String,
+    },
+    /// Retrieve JSON document and viewport status
+    GetStatus,
+}
+
+#[derive(Args, Debug, PartialEq)]
+pub struct PrefetchArgs {
+    /// Directories to monitor for incoming documents (e.g. Downloads, Documents)
+    #[arg(long, num_args = 1.., value_name = "DIRS")]
+    pub dirs: Vec<PathBuf>,
+
+    /// Maximum thumbnail cache limit in megabytes
+    #[arg(long, default_value = "256", value_name = "MB")]
+    pub max_cache_mb: u32,
 }
 
 #[cfg(test)]
@@ -436,5 +550,134 @@ mod tests {
         // because "tui" is treated as the default file, making "doc.pdf" an unexpected argument.
         let result = Cli::try_parse_from(["kiyo", "tui", "doc.pdf"]);
         assert!(result.is_err(), "TUI subcommand must be rejected");
+    }
+
+    #[test]
+    fn test_impose_args_parsing() {
+        let impose_cli = Cli::try_parse_from([
+            "kiyo",
+            "impose",
+            "source.pdf",
+            "--output",
+            "catalog_booklet.pdf",
+            "--nup",
+            "2",
+            "--booklet",
+            "--creep",
+            "0.2835",
+            "--marks",
+            "--gutter",
+            "18.0",
+        ])
+        .expect("Valid impose command");
+
+        match impose_cli.command {
+            Some(Commands::Impose(impose)) => {
+                assert_eq!(impose.input, PathBuf::from("source.pdf"));
+                assert_eq!(impose.output, PathBuf::from("catalog_booklet.pdf"));
+                assert_eq!(impose.nup, 2);
+                assert!(impose.booklet);
+                assert!((impose.creep - 0.2835).abs() < 1e-5);
+                assert!(impose.marks);
+                assert!((impose.gutter - 18.0).abs() < 1e-5);
+            }
+            _ => panic!("Expected Impose subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_crop_margins_args_parsing() {
+        let crop_cli = Cli::try_parse_from([
+            "kiyo",
+            "crop-margins",
+            "scan.pdf",
+            "-o",
+            "cropped.pdf",
+            "--preserve-headers",
+            "--padding",
+            "14.5",
+            "--threshold",
+            "0.95",
+        ])
+        .expect("Valid crop-margins command");
+
+        match crop_cli.command {
+            Some(Commands::CropMargins(crop)) => {
+                assert_eq!(crop.input, PathBuf::from("scan.pdf"));
+                assert_eq!(crop.output, PathBuf::from("cropped.pdf"));
+                assert!(crop.preserve_headers);
+                assert!((crop.padding - 14.5).abs() < 1e-5);
+                assert!((crop.threshold - 0.95).abs() < 1e-5);
+            }
+            _ => panic!("Expected CropMargins subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_remote_args_parsing() {
+        // next-page
+        let next_cli = Cli::try_parse_from(["kiyo", "remote", "next-page"]).expect("Valid remote next-page");
+        match next_cli.command {
+            Some(Commands::Remote(remote)) => {
+                assert_eq!(remote.action, RemoteAction::NextPage);
+                assert_eq!(remote.pid, None);
+            }
+            _ => panic!("Expected Remote subcommand"),
+        }
+
+        // goto with PID
+        let goto_cli = Cli::try_parse_from(["kiyo", "remote", "--pid", "12345", "goto", "42"])
+            .expect("Valid remote goto");
+        match goto_cli.command {
+            Some(Commands::Remote(remote)) => {
+                assert_eq!(remote.action, RemoteAction::Goto { page: 42 });
+                assert_eq!(remote.pid, Some(12345));
+            }
+            _ => panic!("Expected Remote subcommand"),
+        }
+
+        // zoom level
+        let zoom_cli = Cli::try_parse_from(["kiyo", "remote", "zoom", "fit-width"]).expect("Valid remote zoom");
+        match zoom_cli.command {
+            Some(Commands::Remote(remote)) => {
+                assert_eq!(remote.action, RemoteAction::Zoom { level: "fit-width".into() });
+            }
+            _ => panic!("Expected Remote subcommand"),
+        }
+
+        // toggle-dark, jump-tag, get-status
+        let dark_cli = Cli::try_parse_from(["kiyo", "remote", "toggle-dark"]).expect("Valid remote toggle-dark");
+        assert_eq!(dark_cli.command, Some(Commands::Remote(RemoteArgs { action: RemoteAction::ToggleDark, pid: None })));
+
+        let jump_cli = Cli::try_parse_from(["kiyo", "remote", "jump-tag", "ab"]).expect("Valid remote jump-tag");
+        assert_eq!(jump_cli.command, Some(Commands::Remote(RemoteArgs { action: RemoteAction::JumpTag { tag: "ab".into() }, pid: None })));
+
+        let status_cli = Cli::try_parse_from(["kiyo", "remote", "get-status"]).expect("Valid remote get-status");
+        assert_eq!(status_cli.command, Some(Commands::Remote(RemoteArgs { action: RemoteAction::GetStatus, pid: None })));
+    }
+
+    #[test]
+    fn test_prefetch_args_parsing() {
+        let prefetch_cli = Cli::try_parse_from([
+            "kiyo",
+            "prefetch",
+            "--dirs",
+            "/home/user/Downloads",
+            "/home/user/Documents",
+            "--max-cache-mb",
+            "512",
+        ])
+        .expect("Valid prefetch command");
+
+        match prefetch_cli.command {
+            Some(Commands::Prefetch(prefetch)) => {
+                assert_eq!(
+                    prefetch.dirs,
+                    vec![PathBuf::from("/home/user/Downloads"), PathBuf::from("/home/user/Documents")]
+                );
+                assert_eq!(prefetch.max_cache_mb, 512);
+            }
+            _ => panic!("Expected Prefetch subcommand"),
+        }
     }
 }

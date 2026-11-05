@@ -79,6 +79,47 @@ fn main() -> anyhow::Result<()> {
                 );
             }
         }
+        Some(Commands::Impose(impose)) => {
+            if !cli.quiet {
+                println!(
+                    "Imposing document {:?} into {:?} (nup: {}, booklet: {}, creep: {}, marks: {})",
+                    impose.input,
+                    impose.output,
+                    impose.nup,
+                    impose.booklet,
+                    impose.creep,
+                    impose.marks
+                );
+            }
+        }
+        Some(Commands::CropMargins(crop)) => {
+            if !cli.quiet {
+                println!(
+                    "Auto-cropping margins for {:?} into {:?} (preserve_headers: {}, padding: {}, threshold: {})",
+                    crop.input,
+                    crop.output,
+                    crop.preserve_headers,
+                    crop.padding,
+                    crop.threshold
+                );
+            }
+        }
+        Some(Commands::Remote(remote)) => {
+            if !cli.quiet {
+                println!(
+                    "Dispatching remote action {:?} to instance (pid: {:?})",
+                    remote.action, remote.pid
+                );
+            }
+        }
+        Some(Commands::Prefetch(prefetch)) => {
+            if !cli.quiet {
+                println!(
+                    "Starting prefetch daemon for {:?} (max cache: {} MB)",
+                    prefetch.dirs, prefetch.max_cache_mb
+                );
+            }
+        }
         None => {
             if let Some(file) = &cli.default_file {
                 if !cli.quiet {
