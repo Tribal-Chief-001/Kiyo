@@ -1,0 +1,32 @@
+[Nemo Action]
+Active=true
+Name=Kiyo PDF Actions
+Comment=High-performance PDF viewing, OCR, diffing, and merging
+Exec=kiyo gui %F
+Icon-Name=application-pdf
+Selection=any
+Extensions=pdf;PDF;
+Quote=double
+
+[Action Root]
+Name=Kiyo Document Operations
+Icon-Name=application-pdf
+
+[Action item_open]
+Name=Open in Kiyo (GPU Accelerated)
+Exec=kiyo gui %F
+
+[Action item_ocr]
+Name=OCR: Convert to Searchable PDF
+Exec=kiyo ocr --sandwich %F
+Conditions=mimetype=application/pdf;
+
+[Action item_diff]
+Name=Visual Diff Revisions with Kiyo
+Exec=kiyo diff %F
+Conditions=selection_count=2;mimetype=application/pdf;
+
+[Action item_merge]
+Name=Merge Selected PDFs into Single Document
+Exec=kiyo merge %F --output "merged_output.pdf"
+Conditions=selection_count=>1;mimetype=application/pdf;

@@ -13,6 +13,7 @@ ocrs = { workspace = true }
 rten = { workspace = true }
 rten-tensor = { workspace = true }
 image = { workspace = true }
+pdf-writer = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

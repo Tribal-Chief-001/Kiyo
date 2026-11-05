@@ -1,0 +1,21 @@
+version: 1
+AppDir:
+  path: ./AppDir
+  app_info:
+    id: org.kiyo.Kiyo
+    name: Kiyo
+    icon: org.kiyo.Kiyo
+    version: 0.1.0
+    exec: usr/bin/kiyo
+    exec_args: "$@"
+  apt:
+    arch: amd64
+    sources:
+      - sourceline: "deb http://archive.ubuntu.com/ubuntu/ noble main universe"
+    include:
+      - libvulkan1
+      - libx11-6
+      - libxfixes3
+  files:
+    include:
+      - target/release/kiyo: usr/bin/kiyo

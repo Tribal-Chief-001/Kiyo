@@ -32,7 +32,7 @@ kiyo-gui = { path = "crates/kiyo-gui" }
 kiyo-tui = { path = "crates/kiyo-tui" }
 
 # PDF Parsing, Manipulation & Generation
-lopdf = { version = "0.35", default-features = false }
+lopdf = { version = "0.47", default-features = false }
 pdf-writer = "0.15"
 krilla = "0.8"
 pdfium-render = { version = "0.8", default-features = false, features = ["bindings", "sync"] }
@@ -44,9 +44,10 @@ tokio = { version = "1.43", features = ["rt", "rt-multi-thread", "sync", "macros
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 bytemuck = { version = "1.21", features = ["derive"] }
+libc = "0.2"
 
 # GPU Acceleration & Hardware Rendering
-wgpu = { version = "24.0", default-features = false, features = ["vulkan", "gles", "wgsl"] }
+wgpu = { version = "30.0", default-features = false, features = ["vulkan", "gles", "wgsl"] }
 winit = { version = "0.30", features = ["rwh_06"] }
 softbuffer = "0.4"
 tiny-skia = "0.11"
@@ -59,7 +60,7 @@ rten-tensor = "0.27"
 # Terminal UI & Terminal Graphics Engine
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29.0", features = ["event-stream", "bracketed-paste"] }
-ratatui-image = "4.4"
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm", "image-defaults"] }
 unicode-width = "0.2"
 unicode-segmentation = "1.12"
 

@@ -1,0 +1,29 @@
+{
+  "app-id": "org.kiyo.Kiyo",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "24.08",
+  "sdk": "org.freedesktop.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "kiyo",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=x11",
+    "--socket=wayland",
+    "--device=dri",
+    "--filesystem=host",
+    "--talk-name=org.freedesktop.portal.Settings"
+  ],
+  "modules": [
+    {
+      "name": "kiyo",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo build --release",
+        "install -Dm755 target/release/kiyo /app/bin/kiyo",
+        "install -Dm644 packaging/org.kiyo.Kiyo.desktop /app/share/applications/org.kiyo.Kiyo.desktop"
+      ]
+    }
+  ]
+}

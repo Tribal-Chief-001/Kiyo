@@ -29,7 +29,7 @@ Traditional PDF viewers on Linux (Evince, Okular, Zathura, Sioyek) either:
        v                                      v                                  v
 +-----------------------+   +------------------------------------+   +--------------------+
 |       kiyo-gpu        |   |         kiyo-worker (IPC)          |   |     kiyo-ocr       |
-| - wgpu 24/30 Pipeline |   | - Multi-Process PDFium Worker Pool |   | - ocrs 0.13        |
+| - wgpu 30.0 Pipeline  |   | - Multi-Process PDFium Worker Pool |   | - ocrs 0.13        |
 | - Smart Dark Shader   |   | - Shared Memory (memfd_create)     |   | - rten 0.27        |
 | - Visual Diff Shader  |   | - UDS IPC Control Plane            |   | - ISO 32000 (3 Tr) |
 | - tiny-skia Fallback  |   | - Pure Rust hayro Fallback         |   | - Bounding Box Gen |

@@ -9,7 +9,7 @@ The Rust ecosystem contains several mature PDF crates, each optimized for distin
 |                                    Kiyo Core Primitives                                 |
 +-----------------------------------------------------------------------------------------+
 | [memmap2 0.9]   Zero-copy virtual memory mapping of raw PDF byte streams                |
-| [lopdf 0.35]    Object dictionary DOM, cross-reference table parsing, stream decoding   |
+| [lopdf 0.47]    Object dictionary DOM, cross-reference table parsing, stream decoding   |
 | [pdf-writer]    Ultra-fast zero-allocation incremental PDF generator (Typst lineage)    |
 | [krilla 0.8]    High-fidelity vector 2D paths, gradients, and transparency groups       |
 +-----------------------------------------------------------------------------------------+
@@ -58,7 +58,7 @@ impl PdfDocumentSource {
 ```
 **Advantage**: Cold-start load time drops to < 1 ms regardless of file size, and the OS page cache handles physical page loading and eviction transparently under RAM pressure.
 
-### 1.2. `lopdf 0.35 / 0.47`: Object Graph & Repair Engine
+### 1.2. `lopdf 0.47`: Object Graph & Repair Engine
 `lopdf` operates as Kiyo's low-level object inspector:
 - Parses indirect object tables (`XRef` streams and hybrid xref tables).
 - Traverses document catalog dictionaries (`/Pages`, `/Outlines`, `/AcroForm`, `/Names`).
@@ -75,7 +75,7 @@ Developed as the PDF generation engine for the Typst compiler, `pdf-writer` prov
 
 ---
 
-## 2. Hardware-Accelerated Presentation Pipeline (`wgpu`)
+## 2. Hardware-Accelerated Presentation Pipeline (`wgpu 30.0`)
 
 ### 2.1. 3-Tier Fallback Architecture
 Kiyo ensures guaranteed rendering on every Linux platform—from modern Wayland desktops with dedicated GPUs down to headless CI servers and virtual machines:
@@ -193,7 +193,7 @@ fn oklab_to_srgb(c: vec3<f32>) -> vec3<f32> {
     let s = s_ * s_ * s_;
 
     return vec3<f32>(
-        +4.0767439362 * l - 3.3077115913 * m + 0.2309699292 * s,
+        4.0767439362 * l - 3.3077115913 * m + 0.2309699292 * s,
         -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
         -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
     );
@@ -293,7 +293,8 @@ To make scanned PDFs searchable and selectable without altering their visual app
 ```rust
 // crates/kiyo-ocr/src/sandwich.rs
 
-use pdf_writer::{Content, Name, Rect, Ref, TextStr};
+use pdf_writer::{Content, Name, Str};
+use pdf_writer::types::TextRenderingMode;
 use kiyo_render::PdfRect;
 
 pub struct OcrWordBox {
@@ -308,17 +309,17 @@ pub fn inject_invisible_text_layer(
 ) {
     content.begin_text();
     // 3 Tr: Neither fill nor stroke text (renders text completely invisible)
-    content.set_text_rendering_mode(pdf_writer::types::TextRenderingMode::Invisible);
+    content.set_text_rendering_mode(TextRenderingMode::Invisible);
     
     for word in words {
-        let font_size = word.bbox.max_y - word.bbox.min_y;
-        content.set_font(Name(font_name.as_bytes()), font_size);
+        let font_size = (word.bbox.max_y - word.bbox.min_y).abs();
+        content.set_font(Name(font_name.as_bytes()), font_size.max(1.0));
         
         // Transform Matrix (Tm): translate to the word's bottom-left origin
         content.set_text_matrix([1.0, 0.0, 0.0, 1.0, word.bbox.min_x, word.bbox.min_y]);
         
         // Output text glyphs
-        content.show_text(TextStr::new(&word.text));
+        content.show(Str(word.text.as_bytes()));
     }
     content.end_text();
 }
