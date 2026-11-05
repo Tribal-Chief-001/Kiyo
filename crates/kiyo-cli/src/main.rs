@@ -8,6 +8,27 @@ use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 
 fn main() -> Result<()> {
+    // Sanitize Linux locale environment to guarantee valid UTF-8 for libxkbcommon & X11 Compose
+    #[cfg(target_os = "linux")]
+    {
+        let needs_utf8 = |var: &str| {
+            std::env::var(var)
+                .map(|v| !v.is_empty() && !v.to_lowercase().contains("utf"))
+                .unwrap_or(false)
+        };
+        // SAFETY: Called synchronously at the very entry of main() before any threads are spawned.
+        unsafe {
+            if needs_utf8("LANG") {
+                if let Ok(lang) = std::env::var("LANG") {
+                    std::env::set_var("LANG", format!("{}.UTF-8", lang));
+                }
+            }
+            if needs_utf8("LC_CTYPE") || needs_utf8("LC_ALL") || needs_utf8("LANG") {
+                std::env::set_var("LC_CTYPE", "C.UTF-8");
+            }
+        }
+    }
+
     let cli = Cli::parse();
 
     match &cli.command {
