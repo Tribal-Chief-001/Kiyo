@@ -1,7 +1,7 @@
 # 📑 Kiyo: State-of-the-Art Universal Document, E-Book & Comic Workstation
 
 <p align="center">
-  <img src="packaging/org.kiyo.Kiyo.svg" alt="Kiyo Logo" width="128" height="128" />
+  <img src="assets/kiyo-logo.png" alt="Kiyo Logo" width="160" height="160" />
 </p>
 
 <p align="center">
