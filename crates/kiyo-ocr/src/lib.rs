@@ -26,11 +26,7 @@ impl OcrPipeline {
 
 /// Injects an invisible text layer (Text Rendering Mode 3 `3 Tr`) directly into
 /// a PDF page content stream, creating an ISO 32000-compliant searchable sandwich PDF.
-pub fn inject_invisible_text_layer(
-    content: &mut Content,
-    font_name: &str,
-    words: &[OcrWord],
-) {
+pub fn inject_invisible_text_layer(content: &mut Content, font_name: &str, words: &[OcrWord]) {
     content.begin_text();
     // 3 Tr: Neither fill nor stroke text (renders text completely invisible)
     content.set_text_rendering_mode(TextRenderingMode::Invisible);
@@ -83,17 +79,28 @@ mod tests {
         let stream = std::str::from_utf8(buf.as_slice()).expect("Valid UTF-8 stream");
 
         // Verify ISO 32000 operators
-        assert!(stream.contains("BT"), "Stream must contain Begin Text operator");
+        assert!(
+            stream.contains("BT"),
+            "Stream must contain Begin Text operator"
+        );
         assert!(
             stream.contains("3 Tr"),
             "Stream must set Text Rendering Mode 3 (Invisible)"
         );
         assert!(
-            stream.contains("/F1 14 Tf") || stream.contains("/F1 14.0 Tf") || stream.contains("/F1 14"),
+            stream.contains("/F1 14 Tf")
+                || stream.contains("/F1 14.0 Tf")
+                || stream.contains("/F1 14"),
             "Stream must select font F1"
         );
         assert!(stream.contains("(Kiyo) Tj"), "Stream must show 'Kiyo' text");
-        assert!(stream.contains("(Engine) Tj"), "Stream must show 'Engine' text");
-        assert!(stream.contains("ET"), "Stream must contain End Text operator");
+        assert!(
+            stream.contains("(Engine) Tj"),
+            "Stream must show 'Engine' text"
+        );
+        assert!(
+            stream.contains("ET"),
+            "Stream must contain End Text operator"
+        );
     }
 }

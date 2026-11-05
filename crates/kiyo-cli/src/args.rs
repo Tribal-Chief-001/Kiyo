@@ -53,6 +53,9 @@ pub enum Commands {
 
     /// Monitor a PDF file and hot-reload viewers on modification (LaTeX/Typst loops)
     Watch(WatchArgs),
+
+    /// Generate a raster thumbnail image for file managers (Nemo, Nautilus, Dolphin)
+    Thumbnail(ThumbnailArgs),
 }
 
 #[derive(Args, Debug, PartialEq)]
@@ -192,6 +195,25 @@ pub enum TerminalGraphicsMode {
     Halfblock,
 }
 
+#[derive(Args, Debug, PartialEq)]
+pub struct ThumbnailArgs {
+    /// Source document path (%i)
+    #[arg(required = true, value_name = "INPUT")]
+    pub input: PathBuf,
+
+    /// Output thumbnail image destination (%o)
+    #[arg(required = true, value_name = "OUTPUT")]
+    pub output: PathBuf,
+
+    /// Maximum thumbnail bounding size in pixels (%s, default 256)
+    #[arg(value_name = "SIZE", default_value = "256")]
+    pub size: u32,
+
+    /// Page index to render (0-based)
+    #[arg(short, long, default_value = "0")]
+    pub page: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,7 +234,10 @@ mod tests {
 
         match args.command {
             Some(Commands::Merge(merge)) => {
-                assert_eq!(merge.inputs, vec![PathBuf::from("doc1.pdf"), PathBuf::from("doc2.pdf")]);
+                assert_eq!(
+                    merge.inputs,
+                    vec![PathBuf::from("doc1.pdf"), PathBuf::from("doc2.pdf")]
+                );
                 assert_eq!(merge.output, PathBuf::from("combined.pdf"));
                 assert!(merge.preserve_bookmarks);
             }
@@ -325,5 +350,29 @@ mod tests {
         assert!(cli.json);
         assert_eq!(cli.default_file, Some(PathBuf::from("document.pdf")));
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn test_thumbnail_args_parsing() {
+        let thumb_cli = Cli::try_parse_from([
+            "kiyo",
+            "thumbnail",
+            "book.pdf",
+            "thumb.png",
+            "512",
+            "--page",
+            "2",
+        ])
+        .expect("Valid thumbnail command");
+
+        match thumb_cli.command {
+            Some(Commands::Thumbnail(thumb)) => {
+                assert_eq!(thumb.input, PathBuf::from("book.pdf"));
+                assert_eq!(thumb.output, PathBuf::from("thumb.png"));
+                assert_eq!(thumb.size, 512);
+                assert_eq!(thumb.page, 2);
+            }
+            _ => panic!("Expected Thumbnail subcommand"),
+        }
     }
 }

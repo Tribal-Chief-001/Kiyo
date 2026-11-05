@@ -71,6 +71,14 @@ fn main() -> anyhow::Result<()> {
                 );
             }
         }
+        Some(Commands::Thumbnail(thumb)) => {
+            if !cli.quiet {
+                println!(
+                    "Generating {}x{} thumbnail for {:?} into {:?} (page {})",
+                    thumb.size, thumb.size, thumb.input, thumb.output, thumb.page
+                );
+            }
+        }
         None => {
             if let Some(file) = &cli.default_file {
                 if !cli.quiet {

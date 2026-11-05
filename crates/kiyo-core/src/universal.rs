@@ -6,7 +6,7 @@
 //! 3. Sequential art & comic engines (CBZ, CBR, CB7, CBT, Webtoon)
 //! 4. Full workstation document manipulation (Acrobat-style mutations, Bates numbering, Destructive Redaction)
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::path::Path;
 
 /// Canonical classification of supported document formats.
@@ -194,6 +194,29 @@ impl PageMetrics {
     pub fn visible_box(&self) -> (f32, f32, f32, f32) {
         self.crop_box.unwrap_or(self.media_box)
     }
+
+    /// Visible width based on visible bounding box.
+    pub fn visible_width(&self) -> f32 {
+        let b = self.visible_box();
+        (b.2 - b.0).abs()
+    }
+
+    /// Visible height based on visible bounding box.
+    pub fn visible_height(&self) -> f32 {
+        let b = self.visible_box();
+        (b.3 - b.1).abs()
+    }
+
+    /// Viewport dimensions swapping width and height when rotated 90 or 270 degrees.
+    pub fn viewport_dimensions(&self) -> (f32, f32) {
+        let w = self.visible_width();
+        let h = self.visible_height();
+        if self.rotation_degrees == 90 || self.rotation_degrees == 270 {
+            (h, w)
+        } else {
+            (w, h)
+        }
+    }
 }
 
 /// Hierarchical Table of Contents node.
@@ -277,10 +300,22 @@ pub struct RedactionRegion {
 /// Document page-tree mutation actions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PageMutationOp {
-    Rotate { page_index: u32, degrees: i32 },
-    Delete { page_index: u32 },
-    Move { from_index: u32, to_index: u32 },
-    InsertBlank { at_index: u32, width: f32, height: f32 },
+    Rotate {
+        page_index: u32,
+        degrees: i32,
+    },
+    Delete {
+        page_index: u32,
+    },
+    Move {
+        from_index: u32,
+        to_index: u32,
+    },
+    InsertBlank {
+        at_index: u32,
+        width: f32,
+        height: f32,
+    },
     ApplyRedaction(RedactionRegion),
     ApplyBates(BatesConfig),
 }
@@ -406,57 +441,111 @@ pub trait EditableDocument: Send + Sync {
 
 /// Detects document format based on magic bytes and file extension fallback.
 pub fn detect_format(path: &Path, header: &[u8]) -> Result<DocumentFormat> {
-    // 1. Magic byte inspection
-    if header.starts_with(b"%PDF-") {
-        return Ok(DocumentFormat::Pdf);
-    }
-    if header.starts_with(b"AT&TFORM") || header.starts_with(b"FORM") {
-        if header.len() >= 12 && &header[8..12] == b"DJVU" {
-            return Ok(DocumentFormat::DjVu);
-        }
-    }
-    if header.starts_with(b"ITSF") {
-        return Ok(DocumentFormat::Chm);
-    }
-    if header.starts_with(b"Rar!\x1A\x07") {
-        return Ok(DocumentFormat::Comic(ComicArchiveType::Cbr));
-    }
-    if header.starts_with(b"7z\xBC\xAF\x27\x1C") {
-        return Ok(DocumentFormat::Comic(ComicArchiveType::Cb7));
-    }
-    // PalmDOC / MOBI magic header at offset 60
-    if header.len() >= 68 && &header[60..68] == b"BOOKMOBI" {
-        return Ok(DocumentFormat::Mobi);
-    }
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
-    // ZIP magic check (EPUB vs CBZ vs XPS vs generic zip)
-    if header.starts_with(b"PK\x03\x04") {
-        let ext = path
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        match ext.as_str() {
-            "epub" => return Ok(DocumentFormat::Epub),
-            "cbz" => return Ok(DocumentFormat::Comic(ComicArchiveType::Cbz)),
-            "xps" | "oxps" => return Ok(DocumentFormat::Xps),
-            _ => {
-                // If extension is not definitive, inspect for mimetype inside zip
-                if header.windows(20).any(|w| w.starts_with(b"application/epub+zip")) {
-                    return Ok(DocumentFormat::Epub);
-                }
-                return Ok(DocumentFormat::Comic(ComicArchiveType::Cbz));
-            }
-        }
-    }
-
-    // 2. Extension-based fallback
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
 
+    // Check compound extension first (.fb2.zip)
+    if file_name.ends_with(".fb2.zip") {
+        return Ok(DocumentFormat::Fb2);
+    }
+
+    // 1. Magic byte inspection
+    if header.starts_with(b"%PDF-") {
+        return Ok(DocumentFormat::Pdf);
+    }
+
+    // DjVu IFF container:
+    // AT&TFORM <4-byte length> DJVU or DJVM
+    // FORM <4-byte length> DJVU or DJVM
+    if header.starts_with(b"AT&TFORM") {
+        if header.len() >= 16 && (&header[12..16] == b"DJVU" || &header[12..16] == b"DJVM") {
+            return Ok(DocumentFormat::DjVu);
+        }
+    } else if header.starts_with(b"FORM")
+        && header.len() >= 12
+        && (&header[8..12] == b"DJVU" || &header[8..12] == b"DJVM")
+    {
+        return Ok(DocumentFormat::DjVu);
+    }
+
+    // Microsoft Compiled HTML Help (CHM)
+    if header.starts_with(b"ITSF") {
+        return Ok(DocumentFormat::Chm);
+    }
+
+    // FictionBook XML (starts with <?xml or <FictionBook)
+    if (header.starts_with(b"<?xml") || header.starts_with(b"<FictionBook"))
+        && (header
+            .windows(12)
+            .any(|w| w.eq_ignore_ascii_case(b"<FictionBook"))
+            || ext == "fb2")
+    {
+        return Ok(DocumentFormat::Fb2);
+    }
+
+    // RAR archive (CBR) - RAR4 (Rar!\x1A\x07\x00) or RAR5 (Rar!\x1A\x07\x01\x00)
+    if header.starts_with(b"Rar!\x1A\x07") {
+        return Ok(DocumentFormat::Comic(ComicArchiveType::Cbr));
+    }
+
+    // 7-Zip archive (CB7)
+    if header.starts_with(b"7z\xBC\xAF\x27\x1C") {
+        return Ok(DocumentFormat::Comic(ComicArchiveType::Cb7));
+    }
+
+    // TAR archive (CBT) - check "ustar" at offset 257
+    if header.len() >= 262 && &header[257..262] == b"ustar" && (ext == "cbt" || ext == "tar") {
+        return Ok(DocumentFormat::Comic(ComicArchiveType::Cbt));
+    }
+
+    // PalmDOC / MOBI / AZW3 magic header at offset 60
+    if header.len() >= 68 && &header[60..68] == b"BOOKMOBI" {
+        if ext == "azw3" || ext == "azw" || ext == "kf8" {
+            return Ok(DocumentFormat::Azw3);
+        }
+        return Ok(DocumentFormat::Mobi);
+    }
+
+    // ZIP magic check (EPUB vs CBZ vs XPS vs generic zip)
+    if header.starts_with(b"PK\x03\x04") {
+        match ext.as_str() {
+            "epub" => return Ok(DocumentFormat::Epub),
+            "cbz" => return Ok(DocumentFormat::Comic(ComicArchiveType::Cbz)),
+            "xps" | "oxps" => return Ok(DocumentFormat::Xps),
+            "zip" => {
+                // If extension is generic .zip, inspect for mimetype inside zip
+                if header
+                    .windows(20)
+                    .any(|w| w.starts_with(b"application/epub+zip"))
+                {
+                    return Ok(DocumentFormat::Epub);
+                }
+                return Ok(DocumentFormat::Comic(ComicArchiveType::Cbz));
+            }
+            _ => {
+                // For other extensions, check if it's EPUB mimetype
+                if header
+                    .windows(20)
+                    .any(|w| w.starts_with(b"application/epub+zip"))
+                {
+                    return Ok(DocumentFormat::Epub);
+                }
+                // Do NOT misclassify non-document zip archives (e.g. .apk, .docx, .jar) as CBZ comics.
+                // Fall through to extension check.
+            }
+        }
+    }
+
+    // 2. Extension-based fallback
     match ext.as_str() {
         "pdf" => Ok(DocumentFormat::Pdf),
         "xps" | "oxps" => Ok(DocumentFormat::Xps),

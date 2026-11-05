@@ -20,7 +20,12 @@ pub struct PdfRect {
 
 impl PdfRect {
     pub fn new(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Self {
-        Self { min_x, min_y, max_x, max_y }
+        Self {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
     }
 
     pub fn width(&self) -> f32 {
@@ -123,9 +128,24 @@ mod tests {
     #[test]
     fn test_tile_key_hash_and_equality() {
         let mut set = HashSet::new();
-        let k1 = TileKey { page_index: 0, level_of_detail: 0, tile_col: 1, tile_row: 2 };
-        let k2 = TileKey { page_index: 0, level_of_detail: 0, tile_col: 1, tile_row: 2 };
-        let k3 = TileKey { page_index: 1, level_of_detail: 0, tile_col: 1, tile_row: 2 };
+        let k1 = TileKey {
+            page_index: 0,
+            level_of_detail: 0,
+            tile_col: 1,
+            tile_row: 2,
+        };
+        let k2 = TileKey {
+            page_index: 0,
+            level_of_detail: 0,
+            tile_col: 1,
+            tile_row: 2,
+        };
+        let k3 = TileKey {
+            page_index: 1,
+            level_of_detail: 0,
+            tile_col: 1,
+            tile_row: 2,
+        };
 
         set.insert(k1);
         assert!(set.contains(&k2));
