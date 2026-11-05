@@ -158,8 +158,8 @@ pub struct WatchArgs {
 
 #[derive(Args, Debug, PartialEq)]
 pub struct GuiArgs {
-    #[arg(help = "Path to PDF file to open")]
-    pub file: Option<PathBuf>,
+    #[arg(help = "Path to PDF file(s) to open")]
+    pub files: Vec<PathBuf>,
 
     #[arg(long, help = "Enable smart luminance-preserving dark mode")]
     pub dark: bool,

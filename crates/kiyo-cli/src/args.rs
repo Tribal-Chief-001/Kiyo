@@ -163,13 +163,20 @@ pub struct WatchArgs {
 
 #[derive(Args, Debug, PartialEq)]
 pub struct GuiArgs {
-    /// Path to PDF file to open
-    #[arg(value_name = "FILE")]
-    pub file: Option<PathBuf>,
+    /// Path to document file(s) to open
+    #[arg(value_name = "FILES")]
+    pub files: Vec<PathBuf>,
 
     /// Enable smart luminance-preserving dark mode
     #[arg(long)]
     pub dark: bool,
+}
+
+impl GuiArgs {
+    /// Returns the primary target document path, if provided.
+    pub fn file(&self) -> Option<&std::path::Path> {
+        self.files.first().map(|p| p.as_path())
+    }
 }
 
 #[derive(Args, Debug, PartialEq)]
@@ -351,5 +358,83 @@ mod tests {
             }
             _ => panic!("Expected Thumbnail subcommand"),
         }
+    }
+
+    #[test]
+    fn test_gui_args_parsing() {
+        // Blank GUI launch
+        let blank_gui = Cli::try_parse_from(["kiyo", "gui"]).expect("Valid blank gui launch");
+        match blank_gui.command {
+            Some(Commands::Gui(gui)) => {
+                assert!(gui.files.is_empty());
+                assert_eq!(gui.file(), None);
+                assert!(!gui.dark);
+            }
+            _ => panic!("Expected Gui subcommand"),
+        }
+
+        // Single file GUI launch
+        let single_gui = Cli::try_parse_from(["kiyo", "gui", "single.pdf", "--dark"])
+            .expect("Valid single file gui launch");
+        match single_gui.command {
+            Some(Commands::Gui(gui)) => {
+                assert_eq!(gui.files, vec![PathBuf::from("single.pdf")]);
+                assert_eq!(gui.file(), Some(std::path::Path::new("single.pdf")));
+                assert!(gui.dark);
+            }
+            _ => panic!("Expected Gui subcommand"),
+        }
+
+        // Multi-file GUI launch (%U / %F desktop / Nemo compatibility)
+        let multi_gui = Cli::try_parse_from([
+            "kiyo", "gui", "doc1.pdf", "doc2.pdf", "doc3.pdf", "--dark",
+        ])
+        .expect("Valid multi-file gui launch");
+        match multi_gui.command {
+            Some(Commands::Gui(gui)) => {
+                assert_eq!(
+                    gui.files,
+                    vec![
+                        PathBuf::from("doc1.pdf"),
+                        PathBuf::from("doc2.pdf"),
+                        PathBuf::from("doc3.pdf")
+                    ]
+                );
+                assert_eq!(gui.file(), Some(std::path::Path::new("doc1.pdf")));
+                assert!(gui.dark);
+            }
+            _ => panic!("Expected Gui subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_watch_args_parsing() {
+        let watch_cli = Cli::try_parse_from([
+            "kiyo",
+            "watch",
+            "paper.pdf",
+            "--on-reload",
+            "notify-send 'Updated'",
+        ])
+        .expect("Valid watch command");
+
+        match watch_cli.command {
+            Some(Commands::Watch(watch)) => {
+                assert_eq!(watch.file, PathBuf::from("paper.pdf"));
+                assert_eq!(
+                    watch.on_reload.as_deref(),
+                    Some("notify-send 'Updated'")
+                );
+            }
+            _ => panic!("Expected Watch subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_tui_retired_and_rejected() {
+        // Invoking "tui" with an argument should be rejected as invalid positional arg
+        // because "tui" is treated as the default file, making "doc.pdf" an unexpected argument.
+        let result = Cli::try_parse_from(["kiyo", "tui", "doc.pdf"]);
+        assert!(result.is_err(), "TUI subcommand must be rejected");
     }
 }

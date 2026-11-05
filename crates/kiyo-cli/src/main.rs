@@ -7,11 +7,20 @@ fn main() -> anyhow::Result<()> {
     match &cli.command {
         Some(Commands::Gui(gui)) => {
             if !cli.quiet {
-                println!(
-                    "Launching Kiyo GPU desktop viewer for: {:?}",
-                    gui.file.as_deref().unwrap_or(std::path::Path::new("blank"))
-                );
+                match gui.files.len() {
+                    0 => println!("Launching Kiyo GPU desktop viewer for: blank"),
+                    1 => println!(
+                        "Launching Kiyo GPU desktop viewer for: {:?}",
+                        gui.files[0]
+                    ),
+                    n => println!(
+                        "Launching Kiyo GPU desktop viewer for {} documents: {:?}",
+                        n, gui.files
+                    ),
+                }
             }
+            let app = kiyo_gui::GuiApp::new()?;
+            app.run()?;
         }
         Some(Commands::Merge(merge)) => {
             if !cli.quiet {
@@ -75,6 +84,8 @@ fn main() -> anyhow::Result<()> {
                 if !cli.quiet {
                     println!("Opening {:?} with default Kiyo viewer", file);
                 }
+                let app = kiyo_gui::GuiApp::new()?;
+                app.run()?;
             } else if !cli.quiet {
                 println!("Kiyo PDF Engine v0.1.0 — Run 'kiyo --help' for commands");
             }
