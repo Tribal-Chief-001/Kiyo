@@ -131,7 +131,19 @@ else
 fi
 
 log_info "Downloading pre-compiled release (${RELEASE_TAG})..."
-if ${FETCH_CMD} "${DOWNLOAD_URL}" > "${TMP_DIR}/${TARBALL_NAME}" 2>/dev/null && [ -s "${TMP_DIR}/${TARBALL_NAME}" ]; then
+DOWNLOAD_SUCCESS=false
+
+if command -v curl >/dev/null 2>&1; then
+    if curl -fsSL -o "${TMP_DIR}/${TARBALL_NAME}" "${DOWNLOAD_URL}" && [ -s "${TMP_DIR}/${TARBALL_NAME}" ]; then
+        DOWNLOAD_SUCCESS=true
+    fi
+elif command -v wget >/dev/null 2>&1; then
+    if wget -q -O "${TMP_DIR}/${TARBALL_NAME}" "${DOWNLOAD_URL}" && [ -s "${TMP_DIR}/${TARBALL_NAME}" ]; then
+        DOWNLOAD_SUCCESS=true
+    fi
+fi
+
+if [ "${DOWNLOAD_SUCCESS}" = true ]; then
     log_info "Extracting binaries..."
     tar -xzf "${TMP_DIR}/${TARBALL_NAME}" -C "${TMP_DIR}"
     cp "${TMP_DIR}/kiyo" "${BIN_DIR}/kiyo"
