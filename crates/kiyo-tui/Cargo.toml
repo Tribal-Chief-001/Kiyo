@@ -1,0 +1,29 @@
+[package]
+name = "kiyo-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "kiyo_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kiyo-tui"
+path = "src/main.rs"
+
+[dependencies]
+kiyo-core = { workspace = true }
+kiyo-render = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+ratatui-image = { workspace = true }
+unicode-width = { workspace = true }
+unicode-segmentation = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

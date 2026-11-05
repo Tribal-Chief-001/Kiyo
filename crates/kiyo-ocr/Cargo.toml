@@ -1,0 +1,18 @@
+[package]
+name = "kiyo-ocr"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kiyo-core = { workspace = true }
+kiyo-render = { workspace = true }
+ocrs = { workspace = true }
+rten = { workspace = true }
+rten-tensor = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

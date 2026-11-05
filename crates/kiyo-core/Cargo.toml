@@ -1,0 +1,18 @@
+[package]
+name = "kiyo-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+memmap2 = { workspace = true }
+lopdf = { workspace = true }
+pdf-writer = { workspace = true }
+krilla = { workspace = true }
+rayon = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

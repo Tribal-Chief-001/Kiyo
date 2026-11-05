@@ -1,0 +1,16 @@
+[package]
+name = "kiyo-render"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kiyo-core = { workspace = true }
+crossbeam-channel = { workspace = true }
+image = { workspace = true }
+bytemuck = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

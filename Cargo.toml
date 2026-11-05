@@ -1,0 +1,100 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kiyo-core",
+    "crates/kiyo-render",
+    "crates/kiyo-gpu",
+    "crates/kiyo-ocr",
+    "crates/kiyo-gui",
+    "crates/kiyo-tui",
+    "crates/kiyo-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Tribal-Chief-001 <raffrajput123@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Tribal-Chief-001/Kiyo"
+homepage = "https://github.com/Tribal-Chief-001/Kiyo"
+documentation = "https://github.com/Tribal-Chief-001/Kiyo#readme"
+keywords = ["pdf", "viewer", "gpu", "ocr", "tui", "linux-mint", "wayland"]
+categories = ["command-line-utilities", "graphics", "visualization", "text-processing"]
+
+[workspace.dependencies]
+# Internal workspace crates
+kiyo-core = { path = "crates/kiyo-core" }
+kiyo-render = { path = "crates/kiyo-render" }
+kiyo-gpu = { path = "crates/kiyo-gpu" }
+kiyo-ocr = { path = "crates/kiyo-ocr" }
+kiyo-gui = { path = "crates/kiyo-gui" }
+kiyo-tui = { path = "crates/kiyo-tui" }
+
+# PDF Parsing, Manipulation & Generation
+lopdf = { version = "0.35", default-features = false }
+pdf-writer = "0.15"
+krilla = "0.8"
+pdfium-render = { version = "0.8", default-features = false, features = ["bindings", "sync"] }
+
+# Memory, Concurrency & Concurrency Primitives
+memmap2 = "0.9"
+rayon = "1.10"
+tokio = { version = "1.43", features = ["rt", "rt-multi-thread", "sync", "macros", "time", "fs", "io-util", "signal", "process"] }
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+bytemuck = { version = "1.21", features = ["derive"] }
+
+# GPU Acceleration & Hardware Rendering
+wgpu = { version = "24.0", default-features = false, features = ["vulkan", "gles", "wgsl"] }
+winit = { version = "0.30", features = ["rwh_06"] }
+softbuffer = "0.4"
+tiny-skia = "0.11"
+
+# Neural OCR & Machine Learning Engine
+ocrs = "0.13"
+rten = "0.27"
+rten-tensor = "0.27"
+
+# Terminal UI & Terminal Graphics Engine
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.29.0", features = ["event-stream", "bracketed-paste"] }
+ratatui-image = "4.4"
+unicode-width = "0.2"
+unicode-segmentation = "1.12"
+
+# CLI Framework & Serialization
+clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
+
+# Linux Desktop Integration, X11, Wayland & Portals
+x11rb = { version = "0.13", default-features = false, features = ["xfixes", "render"] }
+ashpd = { version = "0.13", default-features = false, features = ["tokio"] }
+zbus = { version = "5.5", default-features = false, features = ["tokio"] }
+notify = "8.0"
+
+# Error Handling, Observability & Diagnostics
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# Dev Artifacts & Compilation Tuning
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# Production Release Profile (Maximized Performance, Minimal Binary Size)
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+overflow-checks = true

@@ -1,0 +1,19 @@
+[package]
+name = "kiyo-gpu"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kiyo-core = { workspace = true }
+kiyo-render = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+softbuffer = { workspace = true }
+tiny-skia = { workspace = true }
+bytemuck = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
