@@ -274,7 +274,10 @@ pub struct RemoteArgs {
     pub pid: Option<u32>,
 }
 
-#[derive(Subcommand, Debug, PartialEq, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Subcommand, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", content = "payload")]
 pub enum RemoteAction {
     /// Advance 1 page (respects comic RTL progression)
     NextPage,
@@ -500,10 +503,9 @@ mod tests {
         }
 
         // Multi-file GUI launch (%U / %F desktop / Nemo compatibility)
-        let multi_gui = Cli::try_parse_from([
-            "kiyo", "gui", "doc1.pdf", "doc2.pdf", "doc3.pdf", "--dark",
-        ])
-        .expect("Valid multi-file gui launch");
+        let multi_gui =
+            Cli::try_parse_from(["kiyo", "gui", "doc1.pdf", "doc2.pdf", "doc3.pdf", "--dark"])
+                .expect("Valid multi-file gui launch");
         match multi_gui.command {
             Some(Commands::Gui(gui)) => {
                 assert_eq!(
@@ -535,10 +537,7 @@ mod tests {
         match watch_cli.command {
             Some(Commands::Watch(watch)) => {
                 assert_eq!(watch.file, PathBuf::from("paper.pdf"));
-                assert_eq!(
-                    watch.on_reload.as_deref(),
-                    Some("notify-send 'Updated'")
-                );
+                assert_eq!(watch.on_reload.as_deref(), Some("notify-send 'Updated'"));
             }
             _ => panic!("Expected Watch subcommand"),
         }
@@ -616,7 +615,8 @@ mod tests {
     #[test]
     fn test_remote_args_parsing() {
         // next-page
-        let next_cli = Cli::try_parse_from(["kiyo", "remote", "next-page"]).expect("Valid remote next-page");
+        let next_cli =
+            Cli::try_parse_from(["kiyo", "remote", "next-page"]).expect("Valid remote next-page");
         match next_cli.command {
             Some(Commands::Remote(remote)) => {
                 assert_eq!(remote.action, RemoteAction::NextPage);
@@ -637,23 +637,50 @@ mod tests {
         }
 
         // zoom level
-        let zoom_cli = Cli::try_parse_from(["kiyo", "remote", "zoom", "fit-width"]).expect("Valid remote zoom");
+        let zoom_cli = Cli::try_parse_from(["kiyo", "remote", "zoom", "fit-width"])
+            .expect("Valid remote zoom");
         match zoom_cli.command {
             Some(Commands::Remote(remote)) => {
-                assert_eq!(remote.action, RemoteAction::Zoom { level: "fit-width".into() });
+                assert_eq!(
+                    remote.action,
+                    RemoteAction::Zoom {
+                        level: "fit-width".into()
+                    }
+                );
             }
             _ => panic!("Expected Remote subcommand"),
         }
 
         // toggle-dark, jump-tag, get-status
-        let dark_cli = Cli::try_parse_from(["kiyo", "remote", "toggle-dark"]).expect("Valid remote toggle-dark");
-        assert_eq!(dark_cli.command, Some(Commands::Remote(RemoteArgs { action: RemoteAction::ToggleDark, pid: None })));
+        let dark_cli = Cli::try_parse_from(["kiyo", "remote", "toggle-dark"])
+            .expect("Valid remote toggle-dark");
+        assert_eq!(
+            dark_cli.command,
+            Some(Commands::Remote(RemoteArgs {
+                action: RemoteAction::ToggleDark,
+                pid: None
+            }))
+        );
 
-        let jump_cli = Cli::try_parse_from(["kiyo", "remote", "jump-tag", "ab"]).expect("Valid remote jump-tag");
-        assert_eq!(jump_cli.command, Some(Commands::Remote(RemoteArgs { action: RemoteAction::JumpTag { tag: "ab".into() }, pid: None })));
+        let jump_cli = Cli::try_parse_from(["kiyo", "remote", "jump-tag", "ab"])
+            .expect("Valid remote jump-tag");
+        assert_eq!(
+            jump_cli.command,
+            Some(Commands::Remote(RemoteArgs {
+                action: RemoteAction::JumpTag { tag: "ab".into() },
+                pid: None
+            }))
+        );
 
-        let status_cli = Cli::try_parse_from(["kiyo", "remote", "get-status"]).expect("Valid remote get-status");
-        assert_eq!(status_cli.command, Some(Commands::Remote(RemoteArgs { action: RemoteAction::GetStatus, pid: None })));
+        let status_cli =
+            Cli::try_parse_from(["kiyo", "remote", "get-status"]).expect("Valid remote get-status");
+        assert_eq!(
+            status_cli.command,
+            Some(Commands::Remote(RemoteArgs {
+                action: RemoteAction::GetStatus,
+                pid: None
+            }))
+        );
     }
 
     #[test]
@@ -673,7 +700,10 @@ mod tests {
             Some(Commands::Prefetch(prefetch)) => {
                 assert_eq!(
                     prefetch.dirs,
-                    vec![PathBuf::from("/home/user/Downloads"), PathBuf::from("/home/user/Documents")]
+                    vec![
+                        PathBuf::from("/home/user/Downloads"),
+                        PathBuf::from("/home/user/Documents")
+                    ]
                 );
                 assert_eq!(prefetch.max_cache_mb, 512);
             }

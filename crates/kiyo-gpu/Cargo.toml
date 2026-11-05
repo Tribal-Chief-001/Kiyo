@@ -14,6 +14,8 @@ winit = { workspace = true }
 softbuffer = { workspace = true }
 tiny-skia = { workspace = true }
 bytemuck = { workspace = true }
+image = { workspace = true }
+pdf-writer = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

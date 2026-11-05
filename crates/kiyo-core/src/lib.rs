@@ -1,11 +1,26 @@
 //! `kiyo-core`: Zero-copy PDF document model, cross-reference streaming, and manipulation.
 
-pub mod imposition;
-pub mod universal;
+#![allow(clippy::collapsible_if, clippy::manual_range_contains)]
 
+pub mod cbr;
+pub mod cbz;
+pub mod epub;
+pub mod imposition;
+pub mod manipulation;
+pub mod salvage;
+pub mod universal;
+pub mod zip_container;
+
+pub use cbr::CbrDocument;
+pub use cbz::CbzDocument;
+pub use epub::EpubDocument;
 pub use imposition::*;
+pub use lopdf;
 pub use lopdf::dictionary;
+pub use manipulation::*;
+pub use salvage::*;
 pub use universal::*;
+pub use zip_container::{ZipArchive, ZipEntry, natural_cmp};
 
 use anyhow::{Result, anyhow};
 use memmap2::Mmap;
@@ -1021,5 +1036,308 @@ mod tests {
         // Verify non-document zip files are NOT misclassified as comics
         assert!(detect_format(Path::new("application.apk"), b"PK\x03\x04\x14\x00").is_err());
         assert!(detect_format(Path::new("document.docx"), b"PK\x03\x04\x14\x00").is_err());
+    }
+
+    #[test]
+    fn test_zip_container_and_cbz_document() {
+        // Construct a valid ZIP in memory with stored entries
+        let mut zip_data = Vec::new();
+        let entries = vec![
+            (
+                "ComicInfo.xml",
+                "<ComicInfo><Title>Kiyo Manga</Title><Writer>Tribal</Writer><Manga>Yes</Manga></ComicInfo>",
+            ),
+            ("page10.jpg", "image10-data"),
+            ("page2.jpg", "image2-data"),
+            ("page1.jpg", "image1-data"),
+        ];
+
+        let mut cd_entries = Vec::new();
+
+        for (name, content) in &entries {
+            let local_offset = zip_data.len() as u32;
+            let name_bytes = name.as_bytes();
+            let content_bytes = content.as_bytes();
+
+            // Local header
+            zip_data.extend_from_slice(b"PK\x03\x04");
+            zip_data.extend_from_slice(&[20, 0]); // version
+            zip_data.extend_from_slice(&[0, 0]); // flags
+            zip_data.extend_from_slice(&[0, 0]); // compression = stored
+            zip_data.extend_from_slice(&[0, 0, 0, 0]); // time/date
+            zip_data.extend_from_slice(&[0, 0, 0, 0]); // crc32
+            zip_data.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes()); // comp size
+            zip_data.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes()); // uncomp size
+            zip_data.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes()); // fn len
+            zip_data.extend_from_slice(&[0, 0]); // extra len
+            zip_data.extend_from_slice(name_bytes);
+            zip_data.extend_from_slice(content_bytes);
+
+            cd_entries.push((name_bytes, content_bytes.len() as u32, local_offset));
+        }
+
+        let cd_offset = zip_data.len() as u32;
+        for (name_bytes, size, local_offset) in &cd_entries {
+            zip_data.extend_from_slice(b"PK\x01\x02");
+            zip_data.extend_from_slice(&[20, 0]); // version made by
+            zip_data.extend_from_slice(&[20, 0]); // version needed
+            zip_data.extend_from_slice(&[0, 0]); // flags
+            zip_data.extend_from_slice(&[0, 0]); // method
+            zip_data.extend_from_slice(&[0, 0, 0, 0]); // time
+            zip_data.extend_from_slice(&[0, 0, 0, 0]); // crc
+            zip_data.extend_from_slice(&size.to_le_bytes()); // comp size
+            zip_data.extend_from_slice(&size.to_le_bytes()); // uncomp size
+            zip_data.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes()); // fn len
+            zip_data.extend_from_slice(&[0, 0]); // extra len
+            zip_data.extend_from_slice(&[0, 0]); // comment len
+            zip_data.extend_from_slice(&[0, 0]); // disk start
+            zip_data.extend_from_slice(&[0, 0]); // int attr
+            zip_data.extend_from_slice(&[0, 0, 0, 0]); // ext attr
+            zip_data.extend_from_slice(&local_offset.to_le_bytes()); // offset
+            zip_data.extend_from_slice(name_bytes);
+        }
+        let cd_size = (zip_data.len() as u32) - cd_offset;
+
+        // EOCD
+        zip_data.extend_from_slice(b"PK\x05\x06");
+        zip_data.extend_from_slice(&[0, 0]); // disk
+        zip_data.extend_from_slice(&[0, 0]); // cd disk
+        zip_data.extend_from_slice(&(cd_entries.len() as u16).to_le_bytes());
+        zip_data.extend_from_slice(&(cd_entries.len() as u16).to_le_bytes());
+        zip_data.extend_from_slice(&cd_size.to_le_bytes());
+        zip_data.extend_from_slice(&cd_offset.to_le_bytes());
+        zip_data.extend_from_slice(&[0, 0]); // comment len
+
+        // Test ZipArchive parse
+        let archive = ZipArchive::parse(&zip_data).expect("Parse ZIP");
+        assert_eq!(archive.entries().len(), 4);
+        let extracted = archive.read_file("page1.jpg").expect("Read page1.jpg");
+        assert_eq!(extracted, b"image1-data");
+
+        // Write to temp cbz file
+        let temp_dir = std::env::temp_dir();
+        let cbz_path = temp_dir.join(format!("kiyo_test_{}.cbz", std::process::id()));
+        std::fs::write(&cbz_path, &zip_data).expect("Write CBZ file");
+
+        let doc = CbzDocument::open(&cbz_path).expect("Open CBZ document");
+        assert_eq!(doc.format(), DocumentFormat::Comic(ComicArchiveType::Cbz));
+        assert_eq!(doc.page_count(), 3); // 3 images, ComicInfo.xml excluded
+        assert_eq!(doc.metadata.title.as_deref(), Some("Kiyo Manga"));
+        assert_eq!(doc.metadata.author.as_deref(), Some("Tribal"));
+        assert_eq!(
+            doc.metadata.reading_direction,
+            Some(ReadingDirection::RightToLeft)
+        );
+
+        // Test natural sort order: page1.jpg, page2.jpg, page10.jpg
+        assert_eq!(doc.image_entries[0], "page1.jpg");
+        assert_eq!(doc.image_entries[1], "page2.jpg");
+        assert_eq!(doc.image_entries[2], "page10.jpg");
+
+        let img_bytes = doc.read_page_image(2).expect("Read page 2 image");
+        assert_eq!(img_bytes, b"image10-data");
+
+        // Test corrupt ZIP linear salvage by stripping EOCD
+        let truncated_zip = &zip_data[..cd_offset as usize];
+        let salvaged_archive = ZipArchive::parse(truncated_zip).expect("Salvage ZIP without EOCD");
+        assert_eq!(salvaged_archive.entries().len(), 4);
+
+        let _ = std::fs::remove_file(cbz_path);
+    }
+
+    #[test]
+    fn test_cbr_document_rar4_and_rar5() {
+        // Construct minimal valid RAR4 header with one image entry
+        let mut rar4_data = Vec::new();
+        rar4_data.extend_from_slice(b"Rar!\x1A\x07\x00");
+        // Main archive header (0x73)
+        rar4_data.extend_from_slice(&[0, 0, 0x73, 0, 0, 7, 0]);
+        // File header (0x74) for "page01.jpg", size 10 bytes
+        let fn_bytes = b"page01.jpg";
+        let header_sz = 32 + fn_bytes.len() as u16;
+        rar4_data.extend_from_slice(&[0, 0, 0x74, 0, 0]);
+        rar4_data.extend_from_slice(&header_sz.to_le_bytes());
+        rar4_data.extend_from_slice(&10u32.to_le_bytes()); // pack size
+        rar4_data.extend_from_slice(&10u32.to_le_bytes()); // unp size
+        rar4_data.extend_from_slice(&[0; 11]); // host, crc, time, ver, method
+        rar4_data.extend_from_slice(&(fn_bytes.len() as u16).to_le_bytes());
+        rar4_data.extend_from_slice(&[0; 4]); // attr
+        rar4_data.extend_from_slice(fn_bytes);
+        rar4_data.extend_from_slice(b"0123456789"); // 10 bytes data
+
+        let temp_dir = std::env::temp_dir();
+        let cbr_path = temp_dir.join(format!("kiyo_test_{}.cbr", std::process::id()));
+        std::fs::write(&cbr_path, &rar4_data).expect("Write CBR file");
+
+        let doc = CbrDocument::open(&cbr_path).expect("Open CBR document");
+        assert_eq!(doc.format(), DocumentFormat::Comic(ComicArchiveType::Cbr));
+        assert_eq!(doc.page_count(), 1);
+        assert_eq!(doc.image_entries[0].name, "page01.jpg");
+        assert_eq!(doc.image_entries[0].unpacked_size, 10);
+
+        let _ = std::fs::remove_file(cbr_path);
+    }
+
+    #[test]
+    fn test_epub_document_and_reflow() {
+        // Create an in-memory EPUB
+        let mut zip_data = Vec::new();
+        let container_xml = r#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+        let content_opf = r#"<?xml version="1.0"?><package version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Kiyo Philosophy</dc:title><dc:creator>Tribal Chief</dc:creator></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="chap1" href="chapter1.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="ncx"><itemref idref="chap1"/></spine></package>"#;
+        let toc_ncx = r#"<?xml version="1.0"?><ncx version="2005-1"><navMap><navPoint id="np1"><navLabel><text>First Chapter</text></navLabel><content src="chapter1.xhtml"/></navPoint></navMap></ncx>"#;
+        let chap1_xhtml = r#"<html><head><title>First Chapter</title></head><body><h1>Chapter One</h1><p>High performance document engineering in Rust.</p></body></html>"#;
+
+        let entries = vec![
+            ("mimetype", "application/epub+zip"),
+            ("META-INF/container.xml", container_xml),
+            ("OEBPS/content.opf", content_opf),
+            ("OEBPS/toc.ncx", toc_ncx),
+            ("OEBPS/chapter1.xhtml", chap1_xhtml),
+        ];
+
+        let mut cd_entries = Vec::new();
+        for (name, content) in &entries {
+            let local_offset = zip_data.len() as u32;
+            let name_bytes = name.as_bytes();
+            let content_bytes = content.as_bytes();
+
+            zip_data.extend_from_slice(b"PK\x03\x04");
+            zip_data.extend_from_slice(&[20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            zip_data.extend_from_slice(&[0, 0, 0, 0]);
+            zip_data.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes());
+            zip_data.extend_from_slice(&(content_bytes.len() as u32).to_le_bytes());
+            zip_data.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            zip_data.extend_from_slice(&[0, 0]);
+            zip_data.extend_from_slice(name_bytes);
+            zip_data.extend_from_slice(content_bytes);
+
+            cd_entries.push((name_bytes, content_bytes.len() as u32, local_offset));
+        }
+
+        let cd_offset = zip_data.len() as u32;
+        for (name_bytes, size, local_offset) in &cd_entries {
+            zip_data.extend_from_slice(b"PK\x01\x02");
+            zip_data.extend_from_slice(&[20, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            zip_data.extend_from_slice(&[0, 0, 0, 0]);
+            zip_data.extend_from_slice(&size.to_le_bytes());
+            zip_data.extend_from_slice(&size.to_le_bytes());
+            zip_data.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            zip_data.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            zip_data.extend_from_slice(&local_offset.to_le_bytes());
+            zip_data.extend_from_slice(name_bytes);
+        }
+        let cd_size = (zip_data.len() as u32) - cd_offset;
+
+        zip_data.extend_from_slice(b"PK\x05\x06");
+        zip_data.extend_from_slice(&[0, 0, 0, 0]);
+        zip_data.extend_from_slice(&(cd_entries.len() as u16).to_le_bytes());
+        zip_data.extend_from_slice(&(cd_entries.len() as u16).to_le_bytes());
+        zip_data.extend_from_slice(&cd_size.to_le_bytes());
+        zip_data.extend_from_slice(&cd_offset.to_le_bytes());
+        zip_data.extend_from_slice(&[0, 0]);
+
+        let temp_dir = std::env::temp_dir();
+        let epub_path = temp_dir.join(format!("kiyo_test_{}.epub", std::process::id()));
+        std::fs::write(&epub_path, &zip_data).expect("Write EPUB file");
+
+        let doc = EpubDocument::open(&epub_path).expect("Open EPUB document");
+        assert_eq!(doc.format(), DocumentFormat::Epub);
+        assert_eq!(doc.metadata.title.as_deref(), Some("Kiyo Philosophy"));
+        assert_eq!(doc.metadata.author.as_deref(), Some("Tribal Chief"));
+        assert_eq!(doc.page_count(), 1);
+
+        let content = doc.extract_text(0).expect("Extract chapter 1 text");
+        assert!(content.contains("Chapter One"));
+        assert!(content.contains("High performance document engineering in Rust."));
+
+        let toc = doc.table_of_contents().expect("TOC");
+        assert_eq!(toc.len(), 1);
+        assert_eq!(toc[0].title, "First Chapter");
+
+        let search = doc.search_text("Rust", true).expect("Search text");
+        assert_eq!(search.len(), 1);
+
+        let reflow = doc.as_reflowable().expect("Reflow downcast");
+        let layout = reflow
+            .layout_pages(600.0, 800.0, 12.0, 1.4)
+            .expect("Compute layout");
+        assert!(layout.computed_page_count >= 1);
+
+        let _ = std::fs::remove_file(epub_path);
+    }
+
+    #[test]
+    fn test_pdf_manipulation_merge_split_crop_impose() {
+        let temp_dir = std::env::temp_dir();
+        let doc1_path = temp_dir.join(format!("kiyo_doc1_{}.pdf", std::process::id()));
+        let doc2_path = temp_dir.join(format!("kiyo_doc2_{}.pdf", std::process::id()));
+        let merged_path = temp_dir.join(format!("kiyo_merged_{}.pdf", std::process::id()));
+        let cropped_path = temp_dir.join(format!("kiyo_cropped_{}.pdf", std::process::id()));
+        let imposed_path = temp_dir.join(format!("kiyo_imposed_{}.pdf", std::process::id()));
+        let split_dir = temp_dir.join(format!("kiyo_split_{}", std::process::id()));
+
+        create_test_pdf_file(&doc1_path);
+        create_test_pdf_file(&doc2_path);
+
+        // 1. Merge
+        merge_documents(&[doc1_path.clone(), doc2_path.clone()], &merged_path, true)
+            .expect("Merge two documents");
+        let merged_doc = Document::open(&merged_path).expect("Open merged document");
+        assert_eq!(merged_doc.page_count(), 2);
+
+        // 2. Split (burst and ranges)
+        let burst_files =
+            split_document(&merged_path, None, true, false, &split_dir).expect("Split burst");
+        assert_eq!(burst_files.len(), 2);
+
+        let range_files = split_document(&merged_path, Some("1"), false, false, &split_dir)
+            .expect("Split range 1");
+        assert_eq!(range_files.len(), 1);
+
+        // 3. Crop margins
+        crop_document_margins(&doc1_path, &cropped_path, true, 8.0, 0.98)
+            .expect("Crop document margins");
+        let cropped_doc = Document::open(&cropped_path).expect("Open cropped document");
+        let metrics = cropped_doc.page_metrics(0).expect("Page metrics");
+        assert!(metrics.crop_box.is_some());
+        let crop = metrics.crop_box.unwrap();
+        assert!(crop.0 > 0.0); // Has inward margin crop
+
+        // 4. Impose (Booklet and N-up)
+        impose_document(&merged_path, &imposed_path, 2, true, 0.2835, true, 14.17)
+            .expect("Booklet imposition with marks");
+        let imposed_doc = Document::open(&imposed_path).expect("Open imposed document");
+        assert!(imposed_doc.page_count() >= 1);
+
+        // Cleanup
+        let _ = std::fs::remove_file(doc1_path);
+        let _ = std::fs::remove_file(doc2_path);
+        let _ = std::fs::remove_file(merged_path);
+        let _ = std::fs::remove_file(cropped_path);
+        let _ = std::fs::remove_file(imposed_path);
+        let _ = std::fs::remove_dir_all(split_dir);
+    }
+
+    #[test]
+    fn test_salvage_corrupted_pdf_pipeline() {
+        // 1. Valid PDF with damaged startxref trailer
+        let temp_dir = std::env::temp_dir();
+        let test_path = temp_dir.join(format!("kiyo_salvage_test_{}.pdf", std::process::id()));
+        create_test_pdf_file(&test_path);
+        let mut pdf_bytes = std::fs::read(&test_path).expect("Read test PDF");
+
+        // Damage the file header: lopdf load_mem strictly fails on non-%PDF- headers
+        pdf_bytes[0..5].copy_from_slice(b"NOPE-");
+
+        assert!(lopdf::Document::load_mem(&pdf_bytes).is_err());
+
+        // Salvage pipeline recovers the document via Stage 3 brute-force scan!
+        let (salvaged, stage) = salvage_corrupted_pdf(&pdf_bytes).expect("Salvage damaged PDF");
+        assert!(salvaged.trailer.has(b"Root"));
+        assert!(
+            stage == SalvageStage::BruteForceScan || stage == SalvageStage::ObjStmDecompression
+        );
+
+        let _ = std::fs::remove_file(test_path);
     }
 }

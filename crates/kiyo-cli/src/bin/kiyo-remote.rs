@@ -2,6 +2,8 @@
 
 use clap::Parser;
 use kiyo_cli::args::RemoteAction;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -22,12 +24,30 @@ struct RemoteCli {
 fn main() -> anyhow::Result<()> {
     let cli = RemoteCli::parse();
 
-    // In a full environment, this opens /run/user/$UID/kiyo/$PID.sock (or active.sock)
-    // and sends the command over the UNIX socket connection.
-    println!(
-        "kiyo-remote: dispatched {:?} (target pid: {:?})",
-        cli.action, cli.pid
-    );
+    let dir = kiyo_gui::IpcServer::socket_dir();
+    let socket_path = if let Some(pid) = cli.pid {
+        dir.join(format!("{pid}.sock"))
+    } else {
+        dir.join("active.sock")
+    };
+
+    if !socket_path.exists() {
+        println!("No active Kiyo instance found at {:?}", socket_path);
+        return Ok(());
+    }
+
+    let mut stream = UnixStream::connect(&socket_path)?;
+    let json_bytes = serde_json::to_vec(&cli.action)?;
+    stream.write_all(&json_bytes)?;
+    stream.shutdown(std::net::Shutdown::Write)?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    if !response.trim().is_empty() {
+        println!("{response}");
+    } else {
+        println!("kiyo-remote: action dispatched successfully.");
+    }
 
     Ok(())
 }

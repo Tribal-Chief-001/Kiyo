@@ -43,6 +43,7 @@ crossbeam-channel = "0.5"
 parking_lot = "0.12"
 bytemuck = { version = "1.21", features = ["derive"] }
 libc = "0.2"
+flate2 = "1.0"
 
 # GPU Acceleration & Hardware Rendering
 wgpu = { version = "30.0", default-features = false, features = ["vulkan", "gles", "wgsl"] }
@@ -52,8 +53,8 @@ tiny-skia = "0.11"
 
 # Neural OCR & Machine Learning Engine
 ocrs = "0.13"
-rten = "0.27"
-rten-tensor = "0.27"
+rten = "0.26"
+rten-tensor = "0.26"
 
 # CLI Framework & Serialization
 clap = { version = "4.5", features = ["derive", "cargo", "env"] }
