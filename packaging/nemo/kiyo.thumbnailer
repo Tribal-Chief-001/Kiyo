@@ -1,0 +1,4 @@
+[Thumbnailer Entry]
+TryExec=kiyo
+Exec=kiyo thumbnail %i %o %s
+MimeType=application/pdf;application/x-pdf;application/epub+zip;application/x-cbz;application/x-cbr;application/x-cb7;application/x-cbt;image/vnd.djvu;application/oxps;application/vnd.ms-xpsdocument;application/x-mobipocket-ebook;application/vnd.amazon.ebook;application/x-fictionbook+xml;

@@ -2,15 +2,16 @@
 
 ## 1. Executive Vision and System Objectives
 
-`Kiyo` is an ultra-high-performance, modular PDF engine, viewer, and document manipulation suite written in Rust. Conceived as a sibling to `Klip` (cross-platform clipboard sync daemon) and `Kiwi` (sub-4MB network intelligence CLI), `Kiyo` solves the chronic fragmentation, sluggishness, and poor Linux integration of modern PDF tooling.
+`Kiyo` is an ultra-high-performance, modular universal document engine, viewer, and workstation authoring suite written in Rust. Conceived as a sibling to `Klip` (cross-platform clipboard sync daemon) and `Kiwi` (sub-4MB network intelligence CLI), `Kiyo` solves the chronic fragmentation, sluggishness, and poor Linux integration of modern document tooling.
 
-Traditional PDF viewers on Linux (Evince, Okular, Zathura, Sioyek) either:
+Traditional document viewers on Linux either:
 1. Suffer from single-threaded UI rendering lockups during heavy Poppler/MuPDF rasterization.
 2. Rely on naive color inversion that destroys figures, charts, and photographs in dark mode.
 3. Lack unified headless CLI and terminal graphics (TUI) interfaces.
 4. Have zero integrated, offline, zero-dependency neural OCR engines for scanned documents.
+5. Force users into separate, bloated tools for e-books (400MB+ WebKit-based readers) and comic archives.
 
-`Kiyo` eliminates these compromises through a 7-crate workspace architecture combining hardware-accelerated GPU raster presentation (`wgpu`), speculative asynchronous tile caching, a multi-process worker pool to circumvent C-library mutex locks, pure-Rust fallback parsers, and native Linux desktop citizenship.
+`Kiyo` eliminates these compromises through a unified 7-crate workspace combining the polymorphic `UniversalDocument` model, hardware-accelerated 2D vector compute rasterization (`vello 0.11` on `wgpu 30.0`), zero-WebKit reflowable layout (`taffy 0.15` and `typst-layout`), SIMD sequential art decoding (`zune-image 0.5`, `unrar-rs 0.15`), and native Linux desktop citizenship.
 
 ```
                                   +-------------------------------------------------------+
@@ -18,29 +19,34 @@ Traditional PDF viewers on Linux (Evince, Okular, Zathura, Sioyek) either:
                                   +-------------------------------------------------------+
                                   |    kiyo-gui (wgpu)   |  kiyo-tui (ratatui) | kiyo-cli |
                                   +----------------------+---------------------+----------+
+                                  | [Academic Mode] [E-Reader Mode] [Comic/Manga] [Studio]|
+                                  +-------------------------------------------------------+
                                              |                      |               |
                                              v                      v               v
 +-----------------------------------------------------------------------------------------+
 |                                    kiyo-render                                          |
-|  - RenderBackend Trait         - Viewport Manager           - Speculative TileCache     |
-|  - Coordinate Transformer      - Page Layout Orchestrator   - Priority Tile Scheduler   |
+|  - RenderBackend & UniversalDocument     - Viewport Manager        - Speculative TileCache|
+|  - Coordinate Transformer (5-Box Geom)   - Layout Orchestrator     - Priority Scheduler |
 +-----------------------------------------------------------------------------------------+
        |                                      |                                  |
        v                                      v                                  v
 +-----------------------+   +------------------------------------+   +--------------------+
 |       kiyo-gpu        |   |         kiyo-worker (IPC)          |   |     kiyo-ocr       |
 | - wgpu 30.0 Pipeline  |   | - Multi-Process PDFium Worker Pool |   | - ocrs 0.13        |
-| - Smart Dark Shader   |   | - Shared Memory (memfd_create)     |   | - rten 0.27        |
-| - Visual Diff Shader  |   | - UDS IPC Control Plane            |   | - ISO 32000 (3 Tr) |
-| - tiny-skia Fallback  |   | - Pure Rust hayro Fallback         |   | - Bounding Box Gen |
+| - Vello 0.11 Vectors  |   | - Shared Memory (memfd_create)     |   | - rten 0.27        |
+| - Smart Dark Shader   |   | - pure-Rust Reflow (Taffy/Typst)   |   | - ISO 32000 (3 Tr) |
+| - Visual Diff Shader  |   | - Sequential Art (unrar / zune)    |   | - Bounding Box Gen |
+| - tiny-skia Fallback  |   | - pure-Rust hayro Fallback         |   |                    |
 +-----------------------+   +------------------------------------+   +--------------------+
                                               |
                                               v
 +-----------------------------------------------------------------------------------------+
 |                                     kiyo-core                                           |
+| - Polymorphic UniversalDocument Trait Hierarchy (Fixed, Reflowable, Sequential Art)     |
 | - Zero-Copy Memory Mapping (memmap2)         - Object Cross-Reference Graph (lopdf)   |
 | - Streaming PDF Writer (pdf-writer)          - Vector Path Compiler (krilla)            |
 | - SyncTeX Parser & Reverse Mapper            - Structural XY-Cut Text Layout Analyzer  |
+| - Adobe Acrobat Pro Feature Engine (5-Box, Destructive Redaction, Bates, AcroForms)     |
 +-----------------------------------------------------------------------------------------+
 ```
 
@@ -377,6 +383,33 @@ pub trait RenderBackend: Send + Sync {
         query: &str,
         case_sensitive: bool,
     ) -> Result<Vec<SearchResult>>;
+}
+
+// crates/kiyo-core/src/universal.rs
+
+/// Polymorphic universal document interface spanning all formats.
+pub trait UniversalDocument: Send + Sync {
+    fn format(&self) -> DocumentFormat;
+    fn category(&self) -> FormatCategory { self.format().category() }
+    fn metadata(&self) -> &DocumentMetadata;
+    fn page_count(&self) -> u32;
+    fn page_metrics(&self, page_index: u32) -> Result<PageMetrics>;
+    fn table_of_contents(&self) -> Result<Vec<TocNode>>;
+    fn extract_text(&self, page_index: u32) -> Result<String>;
+    fn search_text(&self, query: &str, case_sensitive: bool) -> Result<Vec<TextSearchResult>>;
+
+    fn as_reflowable(&self) -> Option<&dyn ReflowableDocument> { None }
+    fn as_sequential_art(&self) -> Option<&dyn SequentialArtDocument> { None }
+    fn as_editable(&mut self) -> Option<&mut dyn EditableDocument> { None }
+}
+
+/// Acrobat-grade document editing, Bates stamping, and destructive redaction.
+pub trait EditableDocument: Send + Sync {
+    fn apply_page_mutation(&mut self, op: PageMutationOp) -> Result<()>;
+    fn apply_redactions(&mut self, regions: &[RedactionRegion]) -> Result<usize>;
+    fn apply_bates_numbering(&mut self, config: &BatesConfig) -> Result<()>;
+    fn set_metadata_entry(&mut self, key: &str, value: &str) -> Result<()>;
+    fn save_to(&self, writer: &mut dyn std::io::Write) -> Result<()>;
 }
 ```
 

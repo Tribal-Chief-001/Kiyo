@@ -5,7 +5,7 @@ Comment=High-performance PDF viewing, OCR, diffing, and merging
 Exec=kiyo gui %F
 Icon-Name=application-pdf
 Selection=any
-Extensions=pdf;PDF;
+Extensions=pdf;PDF;epub;EPUB;cbz;CBZ;cbr;CBR;cb7;CB7;cbt;CBT;djvu;DJVU;djv;DJV;oxps;OXPS;xps;XPS;mobi;MOBI;azw3;AZW3;fb2;FB2;
 Quote=double
 
 [Action Root]
